@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: VoiceDex Release Notes
+    url: https://github.com/longbiaochen/voice-dex/blob/main/docs/releases/v0.1.0.md
+    about: Check the current public-launch notes before opening a support request.

@@ -59,6 +59,19 @@ final class AppCoordinator {
 
     private func startRecording() {
         guard let recorder else { return }
+        if let message = RuntimePreflight.summary(
+            for: RuntimePreflight.issues(
+                for: config,
+                environment: ProcessInfo.processInfo.environment
+            )
+        ) {
+            state = .idle
+            statusMenu?.update(stateLabel: "ERR", detail: "Fix settings before recording")
+            overlay.showError(message)
+            notifier.notify(title: "voice-dex setup required", body: message)
+            return
+        }
+
         state = .processing
         statusMenu?.update(stateLabel: "…", detail: "Requesting microphone")
         overlay.showRecording()
@@ -112,11 +125,10 @@ final class AppCoordinator {
                             switch outcome {
                             case .pasted:
                                 self.statusMenu?.update(stateLabel: "vd", detail: "Pasted into the focused app")
-                                self.overlay.showResult(text: finalText, pasted: true)
-                            case .copiedToClipboard:
-                                self.statusMenu?.update(stateLabel: "vd", detail: "Copied to clipboard")
-                                self.overlay.showResult(text: finalText, pasted: false)
+                            case .copiedToClipboard(let reason):
+                                self.statusMenu?.update(stateLabel: "vd", detail: reason.statusDetail)
                             }
+                            self.overlay.showResult(text: finalText, outcome: outcome)
                         } catch {
                             self.state = .idle
                             self.statusMenu?.update(stateLabel: "ERR", detail: error.localizedDescription)

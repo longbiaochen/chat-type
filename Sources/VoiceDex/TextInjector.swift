@@ -13,13 +13,49 @@ enum InjectionError: LocalizedError {
     }
 }
 
-enum InjectionOutcome: Sendable {
+enum ClipboardFallbackReason: Sendable, Equatable {
+    case accessibilityPermissionRequired
+    case noEditableTarget
+
+    var statusDetail: String {
+        switch self {
+        case .accessibilityPermissionRequired:
+            return "Copied to clipboard. Grant Accessibility access for auto-paste."
+        case .noEditableTarget:
+            return "Copied to clipboard"
+        }
+    }
+
+    var overlaySubtitle: String {
+        switch self {
+        case .accessibilityPermissionRequired:
+            return "Accessibility permission is off, so voice-dex left the text in the clipboard."
+        case .noEditableTarget:
+            return "No editable cursor was found. Paste manually."
+        }
+    }
+}
+
+enum InjectionOutcome: Sendable, Equatable {
     case pasted
-    case copiedToClipboard
+    case copiedToClipboard(reason: ClipboardFallbackReason)
 }
 
 @MainActor
 final class TextInjector {
+    nonisolated static func injectionOutcome(
+        hasEditableTextFocus: Bool,
+        accessibilityTrusted: Bool
+    ) -> InjectionOutcome {
+        guard accessibilityTrusted else {
+            return .copiedToClipboard(reason: .accessibilityPermissionRequired)
+        }
+        guard hasEditableTextFocus else {
+            return .copiedToClipboard(reason: .noEditableTarget)
+        }
+        return .pasted
+    }
+
     func inject(text: String, preserveClipboard: Bool, restoreDelayMilliseconds: UInt64) throws -> InjectionOutcome {
         let pasteboard = NSPasteboard.general
         let snapshot = preserveClipboard ? PasteboardSnapshot.capture(from: pasteboard) : nil
@@ -27,8 +63,15 @@ final class TextInjector {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        guard FocusedElementInspector.hasEditableTextFocus(), AXIsProcessTrusted() else {
-            return .copiedToClipboard
+        let accessibilityTrusted = AXIsProcessTrusted()
+        let hasEditableTextFocus = accessibilityTrusted && FocusedElementInspector.hasEditableTextFocus()
+        let outcome = Self.injectionOutcome(
+            hasEditableTextFocus: hasEditableTextFocus,
+            accessibilityTrusted: accessibilityTrusted
+        )
+
+        guard outcome == .pasted else {
+            return outcome
         }
 
         guard
@@ -51,7 +94,7 @@ final class TextInjector {
             }
         }
 
-        return .pasted
+        return outcome
     }
 }
 

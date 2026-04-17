@@ -28,24 +28,24 @@ enum TranscriptionProvider: String, Codable, Sendable, CaseIterable, Identifiabl
     var title: String {
         switch self {
         case .codexChatGPTBridge:
-            return "Codex ChatGPT Bridge"
+            return "Codex Bridge"
         case .openAICompatible:
-            return "OpenAI-Compatible API"
+            return "OpenAI-Compatible"
         }
     }
 
     var caption: String {
         switch self {
         case .codexChatGPTBridge:
-            return "Zero-key experimental route through the local Codex login state."
+            return "Experimental. Uses local Codex login state and is not the recommended public launch path."
         case .openAICompatible:
-            return "Stable route for /v1/audio/transcriptions with your own API key."
+            return "Recommended. Stable OpenAI-compatible transcription with your own API key."
         }
     }
 }
 
 struct TranscriptionConfig: Codable, Sendable {
-    var provider: TranscriptionProvider = .codexChatGPTBridge
+    var provider: TranscriptionProvider = .openAICompatible
     var hotkeyKeyCode: UInt32 = 96
     var chatGPTURL: String = "https://chatgpt.com/backend-api/transcribe"
     var openAITranscriptionURL: String = "https://api.openai.com/v1/audio/transcriptions"
@@ -70,9 +70,9 @@ struct TranscriptionConfig: Codable, Sendable {
 }
 
 struct CleanupConfig: Codable, Sendable {
-    var enabled: Bool = false
-    var endpoint: String = ""
-    var model: String = ""
+    var enabled: Bool = true
+    var endpoint: String = "https://api.openai.com/v1/chat/completions"
+    var model: String = "gpt-4.1-mini"
     var systemPrompt: String = AppConfig.defaultCleanupPrompt
     var authTokenEnv: String = "OPENAI_API_KEY"
     var authHeaderPrefix: String = "Bearer"

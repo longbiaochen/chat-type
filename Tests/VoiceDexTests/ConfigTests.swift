@@ -3,10 +3,17 @@ import Testing
 @testable import VoiceDex
 
 @Test
-func defaultConfigUsesF5AndDisabledCleanup() throws {
+func defaultConfigUsesPublicLaunchDefaults() throws {
     let config = AppConfig()
     #expect(config.transcription.hotkeyKeyCode == 96)
-    #expect(config.cleanup.enabled == false)
+    #expect(config.transcription.provider == .openAICompatible)
+    #expect(config.transcription.openAITranscriptionURL == "https://api.openai.com/v1/audio/transcriptions")
+    #expect(config.transcription.openAIModel == "gpt-4o-mini-transcribe")
+    #expect(config.transcription.openAIAuthTokenEnv == "OPENAI_API_KEY")
+    #expect(config.cleanup.enabled == true)
+    #expect(config.cleanup.endpoint == "https://api.openai.com/v1/chat/completions")
+    #expect(config.cleanup.model == "gpt-4.1-mini")
+    #expect(config.cleanup.authTokenEnv == "OPENAI_API_KEY")
     #expect(config.transcription.chatGPTURL == "https://chatgpt.com/backend-api/transcribe")
 }
 

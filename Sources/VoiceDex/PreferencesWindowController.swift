@@ -16,7 +16,7 @@ final class PreferencesWindowController: NSWindowController {
         let hostingController = NSHostingController(rootView: view)
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 660),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -61,9 +61,22 @@ private struct PreferencesView: View {
             Text("voice-dex")
                 .font(.system(size: 28, weight: .semibold))
 
-            Text("Press F5 to start. Press F5 again to finish. voice-dex transcribes, optionally polishes, then pastes or copies the final text.")
+            Text("Press F5 to start. Press F5 again to finish. voice-dex records, transcribes, applies AI cleanup, then pastes or copies the final text.")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Quick Start")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("1. Export OPENAI_API_KEY in the environment that launches VoiceDex.")
+                Text("2. Grant Microphone and Accessibility permissions.")
+                Text("3. Keep OpenAI-Compatible as the recommended provider, then press F5.")
+            }
+            .font(.system(size: 12))
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
 
             Form {
                 Section("Trigger") {
@@ -92,11 +105,14 @@ private struct PreferencesView: View {
                         TextField("Transcription Endpoint", text: $config.transcription.openAITranscriptionURL)
                         TextField("Model", text: $config.transcription.openAIModel)
                         TextField("API Key Env", text: $config.transcription.openAIAuthTokenEnv)
+                        Text("Default public launch path: /v1/audio/transcriptions with your own OPENAI_API_KEY.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
                     }
                 }
 
                 Section("Cleanup") {
-                    Toggle("Enable AI Cleanup", isOn: $config.cleanup.enabled)
+                    Toggle("Enable AI Cleanup (Recommended)", isOn: $config.cleanup.enabled)
 
                     if config.cleanup.enabled {
                         TextField("Cleanup Endpoint", text: $config.cleanup.endpoint)
@@ -129,6 +145,6 @@ private struct PreferencesView: View {
             }
         }
         .padding(24)
-        .frame(minWidth: 560, minHeight: 560)
+        .frame(minWidth: 580, minHeight: 660)
     }
 }

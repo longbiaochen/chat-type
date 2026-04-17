@@ -28,9 +28,9 @@ cat >"$PLIST" <<PLIST
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>$HOME/Library/Logs/hotkeyvoice.log</string>
+  <string>$HOME/Library/Logs/voicedex.log</string>
   <key>StandardErrorPath</key>
-  <string>$HOME/Library/Logs/hotkeyvoice.log</string>
+  <string>$HOME/Library/Logs/voicedex.log</string>
 </dict>
 </plist>
 PLIST

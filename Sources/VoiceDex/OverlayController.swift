@@ -55,12 +55,30 @@ final class OverlayController {
         present()
     }
 
-    func showResult(text: String, pasted: Bool) {
+    func showResult(text: String, outcome: InjectionOutcome) {
+        let presentation: (symbolName: String, tintColor: NSColor, title: String, subtitle: String)
+        switch outcome {
+        case .pasted:
+            presentation = (
+                symbolName: "checkmark.circle.fill",
+                tintColor: NSColor.systemGreen,
+                title: "Pasted",
+                subtitle: "Inserted into the focused app."
+            )
+        case .copiedToClipboard(let reason):
+            presentation = (
+                symbolName: "doc.on.clipboard.fill",
+                tintColor: NSColor.systemYellow,
+                title: "Copied to Clipboard",
+                subtitle: reason.overlaySubtitle
+            )
+        }
+
         configure(
-            symbolName: pasted ? "checkmark.circle.fill" : "doc.on.clipboard.fill",
-            tintColor: pasted ? NSColor.systemGreen : NSColor.systemYellow,
-            title: pasted ? "Pasted" : "Copied to Clipboard",
-            subtitle: pasted ? "Inserted into the focused app." : "No editable cursor was found. Paste manually.",
+            symbolName: presentation.symbolName,
+            tintColor: presentation.tintColor,
+            title: presentation.title,
+            subtitle: presentation.subtitle,
             preview: previewText(for: text),
             isProcessing: false
         )
