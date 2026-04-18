@@ -1,5 +1,5 @@
 import Testing
-@testable import VoiceDex
+@testable import ChatType
 
 @Test
 func injectionFallsBackToClipboardWithoutAccessibilityPermission() {

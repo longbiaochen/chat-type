@@ -7,17 +7,17 @@
 3. Keep `version.env` as the single source of truth for release version metadata.
 4. Update docs when changing:
    - permissions
-   - hotkeys
-   - provider configuration
+   - host-app requirements
+   - transcription route defaults
    - packaging or startup behavior
    - release assets or installation steps
 
 ## Coding Standards
 
-- Keep files focused and macOS-native.
-- Prefer AppKit for system integration and SwiftUI for bounded settings surfaces.
-- Avoid hidden magic defaults. Expose operator-facing configuration clearly.
-- Keep comments sparse and only where they reduce real ambiguity.
+- Keep the app focused and macOS-native.
+- Keep the zero-config desktop-login flow simple and explicit.
+- Treat private-backend risk as a product constraint, not a hidden implementation detail.
+- Keep paste behavior conservative: paste only into a focused editable target; otherwise preserve the final text in the clipboard.
 
 ## Verification
 
@@ -32,7 +32,6 @@ For UI changes, verify the actual window or HUD behavior in the running app.
 
 ## Public Launch Expectations
 
-- Keep `openAICompatible` as the recommended default production path unless a deliberate release decision changes it.
-- Treat `codexChatGPTBridge` as experimental in public-facing copy.
-- Keep paste behavior conservative: paste only into a focused editable target; otherwise preserve the final text in the clipboard.
-- If a change affects permissions, environment variables, or Gatekeeper behavior, update `README.md` and `docs/release.md` in the same change.
+- Keep `codexChatGPTBridge` as the recommended V1 default unless there is a deliberate product decision to move away from the desktop-login route.
+- Keep `openAICompatible` as an advanced recovery path, not part of first-run onboarding.
+- If a change affects permissions, host requirements, or Gatekeeper behavior, update `README.md` and `docs/release.md` in the same change.

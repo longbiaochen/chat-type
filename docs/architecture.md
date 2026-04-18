@@ -1,62 +1,85 @@
-# Architecture
+# ChatType Architecture
 
 ## Overview
 
-`voice-dex` is a native macOS menu bar app with a narrow operator workflow:
+`ChatType` is a native macOS menu bar app with a narrow workflow:
 
 1. User presses `F5`
-2. App starts recording and shows a floating HUD
+2. App starts recording and shows a compact HUD
 3. User presses `F5` again
-4. Audio is transcribed
-5. AI cleanup runs on the transcript by default
-6. Final text is pasted or copied
+4. App validates local desktop login-state availability
+5. Audio is sent to the ChatGPT backend transcription path
+6. Result text is pasted or copied
+
+The V1 architecture deliberately optimizes for zero-config usage on a Mac that already runs a signed-in Codex desktop session.
 
 ## Runtime Components
 
 - `AppCoordinator`
-  - owns the product workflow
-  - bridges hotkey, recording, transcription, cleanup, HUD, notifications, and insertion
+  - owns hotkey, recording, transcription, setup-state refresh, and insertion
 - `HotkeyMonitor`
-  - registers the global hotkey
+  - registers the global `F5` shortcut
 - `AudioRecorder`
-  - records mono WAV audio for short dictation sessions
-- `ChatGPTTranscriber`
-  - runs the transcription request using the configured provider
+  - records mono WAV clips for short dictation
 - `CodexAuthClient`
-  - fetches local Codex auth state when the experimental bridge path is used
-- `TextPostProcessor`
-  - applies AI cleanup
+  - reads local Codex desktop login state and returns the current ChatGPT bearer token
+- `ChatGPTTranscriber`
+  - calls the private ChatGPT backend transcription route with `Authorization: Bearer <token>`
+  - measures `auth_ms` and `transcribe_ms`
+  - applies a fixed prompt where supported
 - `RuntimePreflight`
-  - validates the environment and required settings before recording starts
+  - checks desktop host availability, login state, token availability, and any advanced recovery misconfiguration
+- `TranscriptionPromptBuilder`
+  - builds the fixed “directly usable text” prompt and optional hidden hint terms
+- `TerminologyNormalizer`
+  - applies deterministic term preservation without a second model call
+- `LatencyRecorder`
+  - appends per-dictation JSONL metrics under `~/Library/Application Support/ChatType/latency.jsonl`
 - `TextInjector`
-  - copies text and pastes only when the focused target is editable
-  - explains whether clipboard fallback happened because of a missing editable target or missing Accessibility permission
+  - pastes only when an editable target exists; otherwise leaves text in the clipboard
+- `DictationPipeline`
+  - orchestrates transcription and deterministic normalization through testable seams
 - `OverlayController`
-  - renders the HUD shown during recording and processing
+  - renders the floating HUD
 - `PreferencesWindowController`
-  - renders the settings surface
+  - shows onboarding, setup checks, and advanced recovery settings
 
 ## Provider Strategy
 
-Two transcription paths exist:
+Two transcription routes exist:
 
 - `codexChatGPTBridge`
-  - useful for experimentation only
-  - depends on the local Codex login state
-  - not the default public-launch path
+  - default V1 route
+  - recommended for launch
+  - uses local signed-in Codex desktop login state
+  - does not require an API key in the normal flow
 - `openAICompatible`
-  - default public-launch path
-  - preferred for production use
-  - uses `/v1/audio/transcriptions`
-  - supports stable OpenAI-compatible providers
+  - advanced recovery route
+  - not part of default onboarding
+  - requires user-provided endpoint, model, and API key env var
 
-Cleanup is enabled by default in `v0.1.0` and targets an OpenAI-compatible chat completions endpoint for light polishing after transcription.
+## Output Strategy
+
+`ChatType` now treats “directly usable STT text” as a single-stage outcome instead of `transcribe -> rewrite`.
+
+Behavior:
+
+- OpenAI-compatible recovery sends a fixed prompt through the official transcriptions API
+- the desktop-login bridge tries the same prompt and retries without it if the private route rejects the field
+- hidden `transcription.hintTerms` are preserved by a deterministic normalizer
+- no second model call is used in the default product path
+
+## Benchmarking
+
+- `scripts/benchmark_stt.sh` runs the packaged app in headless benchmark mode
+- benchmark mode prints per-file `cold` and `warm` summaries with `auth_ms`, `transcribe_ms`, and `total_ms` p50/p95 values
+- benchmark input audio files are supplied explicitly through the script arguments
 
 ## Packaging
 
-- `version.env` is the single version source for release packaging metadata
-- `scripts/package_app.sh` creates `dist/VoiceDex.app`
-- `scripts/package_app.sh` also creates `dist/VoiceDex-<version>-macos-<arch>.zip`
-- the app bundle is ad-hoc signed locally for development and public launch trials
-- `script/build_and_run.sh` packages then launches
-- `scripts/install_launch_agent.sh` installs the LaunchAgent
+- `version.env` is the single source of truth for version metadata
+- `scripts/package_app.sh` builds `dist/ChatType.app`
+- `scripts/package_app.sh` also creates `dist/ChatType-<version>-macos-<arch>.zip`
+- `scripts/package_app.sh` also creates `dist/ChatType-<version>-macos-<arch>.dmg`
+- `scripts/install_launch_agent.sh` installs `me.longbiaochen.chattype`
+- Homebrew Cask metadata is stored under `packaging/homebrew/Casks/chattype.rb`

@@ -29,7 +29,7 @@ enum ClipboardFallbackReason: Sendable, Equatable {
     var overlaySubtitle: String {
         switch self {
         case .accessibilityPermissionRequired:
-            return "Accessibility permission is off, so voice-dex left the text in the clipboard."
+            return "Accessibility permission is off, so ChatType left the text in the clipboard."
         case .noEditableTarget:
             return "No editable cursor was found. Paste manually."
         }

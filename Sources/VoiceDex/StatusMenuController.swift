@@ -19,16 +19,28 @@ final class StatusMenuController: NSObject {
         self.quitHandler = quitHandler
         super.init()
         configureMenu()
+        update(state: .ready, detail: "Ready. Press F5 to dictate")
     }
 
-    func update(stateLabel: String, detail: String) {
-        statusItem.button?.title = stateLabel
-        stateItem.title = "State: \(detail)"
+    func update(state: StatusMenuVisualState, detail: String) {
+        if let button = statusItem.button {
+            button.title = ""
+            button.image = ChatTypeStatusIconRenderer.image(for: state)
+            button.imagePosition = .imageOnly
+            button.setAccessibilityLabel("ChatType \(state.stateDescription)")
+            button.toolTip = "ChatType: \(state.stateDescription)"
+        }
+
+        stateItem.title = "State: \(state.stateDescription)"
         detailItem.title = detail
     }
 
     private func configureMenu() {
-        statusItem.button?.title = "vd"
+        if let button = statusItem.button {
+            button.title = ""
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
+        }
 
         let menu = NSMenu()
         menu.addItem(stateItem)
@@ -52,7 +64,7 @@ final class StatusMenuController: NSObject {
         menu.addItem(openConfigItem)
 
         let quitItem = NSMenuItem(
-            title: "Quit",
+            title: "Quit ChatType",
             action: #selector(quitApp),
             keyEquivalent: "q"
         )

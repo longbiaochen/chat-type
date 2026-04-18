@@ -1,20 +1,36 @@
 import AppKit
+import CoreGraphics
 import Foundation
 
 @MainActor
 final class OverlayController {
+    private let style = OverlayStylePreset.typeWhisperMinimal
     private let panel: NSPanel
-    private let visualEffectView = NSVisualEffectView()
+    private let backgroundView = NSView()
+    private let leadingContainer = NSView()
+    private let leadingBadgeView = NSView()
+    private let waveformView: OverlayWaveformView
     private let iconView = NSImageView()
-    private let spinner = NSProgressIndicator()
     private let titleLabel = NSTextField(labelWithString: "")
-    private let subtitleLabel = NSTextField(labelWithString: "")
-    private let previewLabel = NSTextField(labelWithString: "")
+    private let detailLabel = NSTextField(labelWithString: "")
     private var hideTask: Task<Void, Never>?
+    private var processingTimer: Timer?
+    private var processingFrameIndex = 0
+    private var displayedLevels: [CGFloat]
+    private var currentState: OverlayVisualState
 
     init() {
+        displayedLevels = Array(
+            repeating: WaveformNormalizer.minimumVisibleLevel,
+            count: style.waveformBarCount
+        )
+        currentState = .processing
+        waveformView = OverlayWaveformView(
+            levels: displayedLevels,
+            style: style
+        )
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 120),
+            contentRect: NSRect(x: 0, y: 0, width: style.pillWidth, height: style.pillHeight),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -32,101 +48,145 @@ final class OverlayController {
     }
 
     func showRecording() {
-        configure(
-            symbolName: "waveform.circle.fill",
-            tintColor: NSColor.systemOrange,
-            title: "Listening",
-            subtitle: "Press F5 again to finish dictation",
-            preview: "Audio is being recorded for transcription and cleanup.",
-            isProcessing: false
+        stopProcessingAnimation()
+        displayedLevels = Array(
+            repeating: WaveformNormalizer.minimumVisibleLevel,
+            count: style.waveformBarCount
         )
+        apply(state: .recording(levels: displayedLevels))
         present()
     }
 
-    func showProcessing(provider: String) {
-        configure(
-            symbolName: "wand.and.stars",
-            tintColor: NSColor.systemBlue,
-            title: "Processing",
-            subtitle: provider,
-            preview: "Transcribing, polishing, and preparing the final text.",
-            isProcessing: true
+    func updateRecordingLevel(_ level: CGFloat) {
+        stopProcessingAnimation()
+        displayedLevels = WaveformNormalizer.smoothedLevels(
+            previous: displayedLevels,
+            targetLevel: level,
+            barCount: style.waveformBarCount
         )
+        apply(state: .recording(levels: displayedLevels))
         present()
+    }
+
+    func showProcessing() {
+        processingFrameIndex = 0
+        displayedLevels = WaveformNormalizer.processingPulseLevels(
+            frame: processingFrameIndex,
+            barCount: style.waveformBarCount
+        )
+        apply(state: .processing)
+        present()
+        startProcessingAnimation()
     }
 
     func showResult(text: String, outcome: InjectionOutcome) {
-        let presentation: (symbolName: String, tintColor: NSColor, title: String, subtitle: String)
+        _ = text
+        stopProcessingAnimation()
+
+        let successKind: OverlaySuccessKind
         switch outcome {
         case .pasted:
-            presentation = (
-                symbolName: "checkmark.circle.fill",
-                tintColor: NSColor.systemGreen,
-                title: "Pasted",
-                subtitle: "Inserted into the focused app."
-            )
-        case .copiedToClipboard(let reason):
-            presentation = (
-                symbolName: "doc.on.clipboard.fill",
-                tintColor: NSColor.systemYellow,
-                title: "Copied to Clipboard",
-                subtitle: reason.overlaySubtitle
-            )
+            successKind = .pasted
+        case .copiedToClipboard:
+            successKind = .copied
         }
 
-        configure(
-            symbolName: presentation.symbolName,
-            tintColor: presentation.tintColor,
-            title: presentation.title,
-            subtitle: presentation.subtitle,
-            preview: previewText(for: text),
-            isProcessing: false
-        )
+        apply(state: .success(successKind))
         present()
-        scheduleHide(afterSeconds: 1.8)
+        scheduleHide(afterSeconds: style.successAutoHideDelay ?? 1.2)
     }
 
     func showError(_ message: String) {
-        configure(
-            symbolName: "exclamationmark.triangle.fill",
-            tintColor: NSColor.systemRed,
-            title: "Something went wrong",
-            subtitle: "The text was not inserted.",
-            preview: previewText(for: message),
-            isProcessing: false
-        )
+        stopProcessingAnimation()
+        apply(state: .error(message))
         present()
-        scheduleHide(afterSeconds: 2.4)
+        scheduleHide(afterSeconds: style.errorAutoHideDelay ?? 2.0)
     }
 
-    private func configure(
+    private func apply(state: OverlayVisualState) {
+        hideTask?.cancel()
+        currentState = state
+        positionPanel(size: panelSize(for: state))
+
+        titleLabel.stringValue = state.label
+        detailLabel.stringValue = state.supplementaryText ?? ""
+        detailLabel.isHidden = !state.allowsSupplementaryText
+
+        switch state {
+        case .recording(let levels):
+            displayedLevels = levels
+            waveformView.isHidden = false
+            waveformView.update(levels: levels)
+            leadingBadgeView.isHidden = true
+            iconView.isHidden = true
+        case .processing:
+            waveformView.isHidden = false
+            waveformView.update(levels: displayedLevels)
+            leadingBadgeView.isHidden = true
+            iconView.isHidden = true
+        case .success(let kind):
+            waveformView.isHidden = true
+            configureBadge(
+                symbolName: kind == .pasted ? "checkmark" : "doc.on.clipboard.fill",
+                tintColor: kind == .pasted ? ChatTypePalette.success : ChatTypePalette.amber,
+                fillColor: kind == .pasted ? ChatTypePalette.success.withAlphaComponent(0.14) : ChatTypePalette.amber.withAlphaComponent(0.16),
+                borderColor: kind == .pasted ? ChatTypePalette.success.withAlphaComponent(0.34) : ChatTypePalette.amber.withAlphaComponent(0.38)
+            )
+        case .error:
+            waveformView.isHidden = true
+            configureBadge(
+                symbolName: "exclamationmark",
+                tintColor: ChatTypePalette.error,
+                fillColor: ChatTypePalette.error.withAlphaComponent(0.15),
+                borderColor: ChatTypePalette.error.withAlphaComponent(0.34)
+            )
+        }
+    }
+
+    private func configureBadge(
         symbolName: String,
         tintColor: NSColor,
-        title: String,
-        subtitle: String,
-        preview: String,
-        isProcessing: Bool
+        fillColor: NSColor,
+        borderColor: NSColor
     ) {
-        hideTask?.cancel()
+        leadingBadgeView.isHidden = false
+        leadingBadgeView.layer?.backgroundColor = fillColor.cgColor
+        leadingBadgeView.layer?.borderColor = borderColor.cgColor
+
         if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
             iconView.image = image
             iconView.contentTintColor = tintColor
-        }
-
-        spinner.isHidden = !isProcessing
-        if isProcessing {
-            spinner.startAnimation(nil)
         } else {
-            spinner.stopAnimation(nil)
+            iconView.image = nil
         }
 
-        titleLabel.stringValue = title
-        subtitleLabel.stringValue = subtitle
-        previewLabel.stringValue = preview
+        iconView.isHidden = false
+    }
+
+    private func startProcessingAnimation() {
+        stopProcessingAnimation()
+
+        processingTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.processingFrameIndex += 1
+                self.displayedLevels = WaveformNormalizer.processingPulseLevels(
+                    frame: self.processingFrameIndex,
+                    barCount: self.style.waveformBarCount
+                )
+                if case .processing = self.currentState {
+                    self.waveformView.update(levels: self.displayedLevels)
+                }
+            }
+        }
+    }
+
+    private func stopProcessingAnimation() {
+        processingTimer?.invalidate()
+        processingTimer = nil
     }
 
     private func present() {
-        positionPanel()
         if panel.alphaValue == 0 || !panel.isVisible {
             panel.alphaValue = 0
             panel.orderFrontRegardless()
@@ -149,6 +209,7 @@ final class OverlayController {
                 panel.animator().alphaValue = 0
             }, completionHandler: {
                 Task { @MainActor in
+                    self.stopProcessingAnimation()
                     self.panel.orderOut(nil)
                 }
             })
@@ -156,98 +217,189 @@ final class OverlayController {
     }
 
     private func configureViews() {
-        visualEffectView.translatesAutoresizingMaskIntoConstraints = false
-        visualEffectView.material = .hudWindow
-        visualEffectView.blendingMode = .withinWindow
-        visualEffectView.state = .active
-        visualEffectView.wantsLayer = true
-        visualEffectView.layer?.cornerRadius = 24
-        visualEffectView.layer?.borderWidth = 1
-        visualEffectView.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
-
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
         panel.contentView = container
-        container.addSubview(visualEffectView)
+        container.wantsLayer = true
+        container.addSubview(backgroundView)
+
+        backgroundView.translatesAutoresizingMaskIntoConstraints = false
+        backgroundView.wantsLayer = true
+        backgroundView.layer?.backgroundColor = ChatTypePalette.graphite.cgColor
+        backgroundView.layer?.cornerRadius = style.cornerRadius
+        backgroundView.layer?.borderWidth = 1
+        backgroundView.layer?.borderColor = ChatTypePalette.mist.withAlphaComponent(0.08).cgColor
+        backgroundView.shadow = NSShadow()
+        backgroundView.shadow?.shadowBlurRadius = 18
+        backgroundView.shadow?.shadowOffset = NSSize(width: 0, height: -2)
+        backgroundView.shadow?.shadowColor = NSColor.black.withAlphaComponent(0.35)
+
+        leadingContainer.translatesAutoresizingMaskIntoConstraints = false
+        leadingContainer.wantsLayer = false
+
+        leadingBadgeView.translatesAutoresizingMaskIntoConstraints = false
+        leadingBadgeView.wantsLayer = true
+        leadingBadgeView.layer?.cornerRadius = 18
+        leadingBadgeView.layer?.borderWidth = 1
+        leadingBadgeView.isHidden = true
+
+        waveformView.translatesAutoresizingMaskIntoConstraints = false
 
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.symbolConfiguration = .init(pointSize: 28, weight: .semibold)
+        iconView.symbolConfiguration = .init(pointSize: 16, weight: .bold)
         iconView.imageScaling = .scaleProportionallyUpOrDown
-
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isDisplayedWhenStopped = false
+        iconView.isHidden = true
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
-        titleLabel.textColor = .white
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.textColor = ChatTypePalette.mist
+        titleLabel.lineBreakMode = .byTruncatingTail
 
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        subtitleLabel.textColor = NSColor.white.withAlphaComponent(0.74)
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+        detailLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        detailLabel.textColor = ChatTypePalette.mistMuted
+        detailLabel.maximumNumberOfLines = 1
+        detailLabel.lineBreakMode = .byTruncatingTail
+        detailLabel.isHidden = true
 
-        previewLabel.translatesAutoresizingMaskIntoConstraints = false
-        previewLabel.font = .systemFont(ofSize: 13, weight: .regular)
-        previewLabel.textColor = NSColor.white.withAlphaComponent(0.92)
-        previewLabel.maximumNumberOfLines = 2
-        previewLabel.lineBreakMode = .byTruncatingTail
-
-        let titleRow = NSStackView(views: [titleLabel, spinner])
-        titleRow.translatesAutoresizingMaskIntoConstraints = false
-        titleRow.orientation = .horizontal
-        titleRow.spacing = 8
-        titleRow.alignment = .centerY
-
-        let textStack = NSStackView(views: [titleRow, subtitleLabel, previewLabel])
+        let textStack = NSStackView(views: [titleLabel, detailLabel])
         textStack.translatesAutoresizingMaskIntoConstraints = false
         textStack.orientation = .vertical
-        textStack.spacing = 6
+        textStack.spacing = 2
         textStack.alignment = .leading
 
-        visualEffectView.addSubview(iconView)
-        visualEffectView.addSubview(textStack)
+        backgroundView.addSubview(leadingContainer)
+        backgroundView.addSubview(textStack)
+        leadingContainer.addSubview(waveformView)
+        leadingContainer.addSubview(leadingBadgeView)
+        leadingContainer.addSubview(iconView)
 
         NSLayoutConstraint.activate([
-            visualEffectView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            visualEffectView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            visualEffectView.topAnchor.constraint(equalTo: container.topAnchor),
-            visualEffectView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            backgroundView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            backgroundView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            backgroundView.topAnchor.constraint(equalTo: container.topAnchor),
+            backgroundView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
-            iconView.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor, constant: 22),
-            iconView.centerYAnchor.constraint(equalTo: visualEffectView.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 34),
-            iconView.heightAnchor.constraint(equalToConstant: 34),
+            leadingContainer.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor, constant: 14),
+            leadingContainer.centerYAnchor.constraint(equalTo: backgroundView.centerYAnchor),
+            leadingContainer.widthAnchor.constraint(equalToConstant: style.leadingVisualWidth),
+            leadingContainer.heightAnchor.constraint(equalToConstant: style.leadingVisualHeight),
 
-            textStack.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 16),
-            textStack.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor, constant: -20),
-            textStack.centerYAnchor.constraint(equalTo: visualEffectView.centerYAnchor),
+            waveformView.leadingAnchor.constraint(equalTo: leadingContainer.leadingAnchor),
+            waveformView.trailingAnchor.constraint(equalTo: leadingContainer.trailingAnchor),
+            waveformView.topAnchor.constraint(equalTo: leadingContainer.topAnchor),
+            waveformView.bottomAnchor.constraint(equalTo: leadingContainer.bottomAnchor),
+
+            leadingBadgeView.centerXAnchor.constraint(equalTo: leadingContainer.centerXAnchor),
+            leadingBadgeView.centerYAnchor.constraint(equalTo: leadingContainer.centerYAnchor),
+            leadingBadgeView.widthAnchor.constraint(equalToConstant: 64),
+            leadingBadgeView.heightAnchor.constraint(equalToConstant: 36),
+
+            iconView.centerXAnchor.constraint(equalTo: leadingBadgeView.centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: leadingBadgeView.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 18),
+            iconView.heightAnchor.constraint(equalToConstant: 18),
+
+            textStack.leadingAnchor.constraint(equalTo: leadingContainer.trailingAnchor, constant: 10),
+            textStack.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor, constant: -16),
+            textStack.centerYAnchor.constraint(equalTo: backgroundView.centerYAnchor),
         ])
     }
 
-    private func positionPanel() {
+    private func panelSize(for state: OverlayVisualState) -> NSSize {
+        switch state {
+        case .error:
+            return NSSize(width: style.errorPillWidth, height: style.pillHeight)
+        default:
+            return NSSize(width: style.pillWidth, height: style.pillHeight)
+        }
+    }
+
+    private func positionPanel(size: NSSize) {
         let screen = activeScreen() ?? NSScreen.main
         let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let width = panel.frame.width
-        let height = panel.frame.height
         let origin = NSPoint(
-            x: visibleFrame.midX - (width / 2),
-            y: visibleFrame.minY + 92
+            x: visibleFrame.midX - (size.width / 2),
+            y: visibleFrame.minY + 116
         )
-        panel.setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: false)
+        panel.setFrame(NSRect(origin: origin, size: size), display: false)
     }
 
     private func activeScreen() -> NSScreen? {
         let mouseLocation = NSEvent.mouseLocation
         return NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) })
     }
+}
 
-    private func previewText(for text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.count <= 110 {
-            return trimmed
+@MainActor
+private final class OverlayWaveformView: NSView {
+    private var levels: [CGFloat]
+    private let style: OverlayStylePreset
+
+    init(levels: [CGFloat], style: OverlayStylePreset) {
+        self.levels = levels
+        self.style = style
+        super.init(frame: .zero)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(levels: [CGFloat]) {
+        let trimmed = Array(levels.prefix(style.waveformBarCount))
+        if trimmed.count == style.waveformBarCount {
+            self.levels = trimmed
+        } else {
+            self.levels = trimmed + Array(
+                repeating: WaveformNormalizer.minimumVisibleLevel,
+                count: max(0, style.waveformBarCount - trimmed.count)
+            )
         }
-        let index = trimmed.index(trimmed.startIndex, offsetBy: 110)
-        return String(trimmed[..<index]) + "…"
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let activeLevels = levels.isEmpty
+            ? Array(repeating: WaveformNormalizer.minimumVisibleLevel, count: style.waveformBarCount)
+            : levels
+
+        let totalSpacing = style.waveformBarSpacing * CGFloat(max(0, activeLevels.count - 1))
+        let availableWidth = bounds.width - totalSpacing
+        let rawBarWidth = availableWidth / CGFloat(max(1, activeLevels.count))
+        let barWidth = max(3, min(4, floor(rawBarWidth)))
+        let contentWidth = (barWidth * CGFloat(activeLevels.count)) + totalSpacing
+        var x = bounds.midX - (contentWidth / 2)
+        let center = CGFloat(max(0, activeLevels.count - 1)) / 2
+
+        for (index, level) in activeLevels.enumerated() {
+            let barHeight = max(style.waveformMinimumBarHeight, bounds.height * level)
+            let barRect = CGRect(
+                x: x,
+                y: bounds.midY - (barHeight / 2),
+                width: barWidth,
+                height: barHeight
+            )
+
+            let distanceFromCenter = abs(CGFloat(index) - center) / max(1, center)
+            let accentMix = (1 - min(1, distanceFromCenter)) * min(1, 0.42 + (level * 0.68))
+            let barColor = NSColor.blend(
+                from: ChatTypePalette.mist.withAlphaComponent(0.68),
+                to: ChatTypePalette.iceBlue,
+                amount: accentMix
+            )
+            barColor.setFill()
+            NSBezierPath(
+                roundedRect: barRect,
+                xRadius: barWidth / 2,
+                yRadius: barWidth / 2
+            ).fill()
+
+            x += barWidth + style.waveformBarSpacing
+        }
     }
 }

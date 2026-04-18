@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreGraphics
 import Foundation
 
 struct RecordedAudio: Sendable {
@@ -43,7 +44,7 @@ final class AudioRecorder {
         }
 
         let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("voice-dex-\(UUID().uuidString).wav")
+            .appendingPathComponent("chattype-\(UUID().uuidString).wav")
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatLinearPCM),
             AVSampleRateKey: sampleRateHz,
@@ -54,7 +55,7 @@ final class AudioRecorder {
         ]
 
         let recorder = try AVAudioRecorder(url: tempURL, settings: settings)
-        recorder.isMeteringEnabled = false
+        recorder.isMeteringEnabled = true
         guard recorder.prepareToRecord(), recorder.record() else {
             throw RecorderError.recorderStartFailed
         }
@@ -75,6 +76,17 @@ final class AudioRecorder {
         return RecordedAudio(
             fileURL: fileURL,
             durationMs: Int((recorder.currentTime * 1000).rounded())
+        )
+    }
+
+    func currentLevel() -> CGFloat? {
+        guard let recorder else {
+            return nil
+        }
+
+        recorder.updateMeters()
+        return WaveformNormalizer.normalizedLevel(
+            fromAveragePower: recorder.averagePower(forChannel: 0)
         )
     }
 }

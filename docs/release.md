@@ -1,35 +1,35 @@
-# Release Process
+# ChatType Release Process
 
 ## Local Release Checklist
 
 1. Run `./scripts/check.sh`
 2. Run `./scripts/package_app.sh`
-3. Confirm the release asset exists: `dist/VoiceDex-0.1.0-macos-arm64.zip`
-4. Launch `dist/VoiceDex.app`
-5. Verify the public-launch defaults:
-   - provider defaults to OpenAI-Compatible
-   - cleanup is enabled
-   - cleanup defaults target `https://api.openai.com/v1/chat/completions`
-   - cleanup model defaults to `gpt-4.1-mini`
-6. Verify packaging and startup:
-   - menu bar item appears
-   - settings window opens
-   - app can be relaunched from the packaged bundle
-7. Verify runtime behavior:
+3. Confirm the release assets exist:
+   - `dist/ChatType-0.1.0-macos-arm64.zip`
+   - `dist/ChatType-0.1.0-macos-arm64.dmg`
+4. Launch `dist/ChatType.app`
+5. Verify setup states:
+   - signed-in Codex desktop session shows as ready
+   - microphone state is reported correctly
+   - Accessibility state is reported correctly
+6. Verify runtime behavior:
    - HUD appears on `F5`
    - recording stops on second `F5`
-   - missing `OPENAI_API_KEY` produces a clear setup error before recording
+   - missing Codex desktop install produces a clear setup blocker
+   - missing ChatGPT login in Codex produces a clear setup blocker
    - paste vs clipboard fallback behaves correctly
-   - missing Accessibility permission keeps the result in the clipboard with an explicit explanation
-8. Re-test from the zipped release artifact:
-   - unzip `dist/VoiceDex-0.1.0-macos-arm64.zip`
-   - launch the extracted `VoiceDex.app`
-   - follow the same install instructions used in the release notes
-9. Confirm docs are aligned:
-   - `README.md`
-   - `docs/architecture.md`
-   - `docs/releases/v0.1.0.md`
-10. Publish the GitHub Release using `docs/releases/v0.1.0.md`
+   - settings do not expose a second AI cleanup stage in the main flow
+   - output remains directly usable without a second model call
+7. Verify advanced recovery mode:
+   - switching to `OpenAI-Compatible Recovery` exposes endpoint, model, and API env settings
+   - missing API key in recovery mode produces a clear setup blocker
+   - if `transcription.hintTerms` exists in config.json, filenames and product names are preserved
+8. Re-test from the packaged release artifacts:
+   - unzip `dist/ChatType-0.1.0-macos-arm64.zip`
+   - launch the extracted `ChatType.app`
+   - mount `dist/ChatType-0.1.0-macos-arm64.dmg`
+   - launch the mounted `ChatType.app`
+9. Update docs if any onboarding, naming, packaging, or launch assumptions changed.
 
 ## Gatekeeper Notes
 
@@ -37,27 +37,26 @@
 
 If macOS blocks the app:
 
-- Right-click the app in Finder and choose `Open`
-- Or remove quarantine:
+- right-click `ChatType.app` and choose `Open`
+- or remove quarantine:
 
 ```bash
-xattr -dr com.apple.quarantine /path/to/VoiceDex.app
+xattr -dr com.apple.quarantine /path/to/ChatType.app
 ```
 
-Document this clearly in the GitHub Release body.
+## Homebrew Cask
 
-## GitHub Publishing
+Keep the cask file aligned with the release artifact:
 
-Recommended repository defaults:
+```text
+packaging/homebrew/Casks/chattype.rb
+```
 
-- repository name: `voice-dex`
-- default branch: `main`
-- visibility: public
+If the asset filename or release URL format changes, update the cask in the same change.
 
 ## Follow-Up Work After v0.1.0
 
-- add a production app icon
-- add proper Developer ID signing
 - notarize the `.app` or `.dmg`
-- publish screenshots and a short demo video
-- improve first-run onboarding for environment variables and permissions
+- publish a dedicated Homebrew tap
+- broaden first-run diagnostics for desktop-host failures
+- keep benchmark samples around for 3s / 10s / 30s regression checks

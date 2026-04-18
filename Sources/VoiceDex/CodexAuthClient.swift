@@ -5,6 +5,55 @@ struct AuthStatus: Sendable {
     let authToken: String?
 }
 
+final class AuthStatusCache: @unchecked Sendable {
+    private struct Entry: Sendable {
+        let status: AuthStatus
+        let storedAt: Date
+    }
+
+    static let shared = AuthStatusCache()
+
+    private let ttl: TimeInterval
+    private let now: @Sendable () -> Date
+    private let lock = NSLock()
+    private var entry: Entry?
+
+    init(
+        ttl: TimeInterval = 600,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) {
+        self.ttl = ttl
+        self.now = now
+    }
+
+    func store(_ status: AuthStatus, at timestamp: Date? = nil) {
+        lock.lock()
+        entry = Entry(status: status, storedAt: timestamp ?? now())
+        lock.unlock()
+    }
+
+    func cachedStatus(includeToken: Bool, now overrideNow: Date? = nil) -> AuthStatus? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard let entry else {
+            return nil
+        }
+
+        let currentTime = overrideNow ?? now()
+        guard currentTime.timeIntervalSince(entry.storedAt) <= ttl else {
+            self.entry = nil
+            return nil
+        }
+
+        let token = entry.status.authToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if includeToken, token.isEmpty {
+            return nil
+        }
+        return entry.status
+    }
+}
+
 enum CodexAuthError: LocalizedError {
     case launcherNotFound
     case initializeFailed(String)
@@ -35,14 +84,67 @@ enum CodexAuthError: LocalizedError {
 }
 
 struct CodexAuthClient: Sendable {
-    private let commandCandidates = [
+    private static let commandCandidates = [
         "/Applications/Codex.app/Contents/Resources/codex",
         "/usr/local/bin/codex",
         "/opt/homebrew/bin/codex",
     ]
+    let cache: AuthStatusCache
+    let now: @Sendable () -> Date
+    let liveFetch: @Sendable (_ includeToken: Bool, _ refreshToken: Bool) throws -> AuthStatus
 
-    func fetchAuthStatus(includeToken: Bool = true, refreshToken: Bool = true) throws -> AuthStatus {
-        let executableURL = try resolveExecutableURL()
+    init(
+        cache: AuthStatusCache = .shared,
+        now: @escaping @Sendable () -> Date = Date.init,
+        liveFetch: @escaping @Sendable (_ includeToken: Bool, _ refreshToken: Bool) throws -> AuthStatus = { includeToken, refreshToken in
+            try Self.performLiveFetch(includeToken: includeToken, refreshToken: refreshToken)
+        }
+    ) {
+        self.cache = cache
+        self.now = now
+        self.liveFetch = liveFetch
+    }
+
+    func fetchAuthStatus(
+        includeToken: Bool = true,
+        refreshToken: Bool = true,
+        allowCached: Bool = false
+    ) throws -> AuthStatus {
+        if allowCached, let cached = cache.cachedStatus(includeToken: includeToken, now: now()) {
+            return cached
+        }
+
+        let status = try liveFetch(includeToken, refreshToken)
+        cache.store(status, at: now())
+        return status
+    }
+
+    func fetchBestAvailableAuthStatus(includeToken: Bool = true) throws -> AuthStatus {
+        if let cached = cache.cachedStatus(includeToken: includeToken, now: now()) {
+            return cached
+        }
+
+        do {
+            return try fetchAuthStatus(
+                includeToken: includeToken,
+                refreshToken: false,
+                allowCached: false
+            )
+        } catch {
+            return try fetchAuthStatus(
+                includeToken: includeToken,
+                refreshToken: true,
+                allowCached: false
+            )
+        }
+    }
+
+    func prewarmChatGPTStatus() throws {
+        _ = try fetchAuthStatus(includeToken: true, refreshToken: true, allowCached: false)
+    }
+
+    private static func performLiveFetch(includeToken: Bool, refreshToken: Bool) throws -> AuthStatus {
+        let executableURL = try Self.resolveExecutableURL()
         let process = Process()
         process.executableURL = executableURL
         process.arguments = ["app-server"]
@@ -63,14 +165,14 @@ struct CodexAuthClient: Sendable {
             }
         }
 
-        try send(
+        try Self.send(
             [
                 "id": 0,
                 "method": "initialize",
                 "params": [
                     "clientInfo": [
-                        "name": "voice_dex",
-                        "title": "voice-dex",
+                        "name": "chat_type",
+                        "title": "ChatType",
                         "version": "0.1.0",
                     ],
                 ],
@@ -83,7 +185,7 @@ struct CodexAuthClient: Sendable {
             throw CodexAuthError.initializeFailed(errorMessage)
         }
 
-        try send(
+        try Self.send(
             [
                 "method": "initialized",
                 "params": [:],
@@ -91,7 +193,7 @@ struct CodexAuthClient: Sendable {
             to: stdinPipe.fileHandleForWriting
         )
 
-        try send(
+        try Self.send(
             [
                 "id": "auth-status",
                 "method": "getAuthStatus",
@@ -127,13 +229,15 @@ struct CodexAuthClient: Sendable {
         return AuthStatus(authMethod: authMethod, authToken: token)
     }
 
-    private func resolveExecutableURL() throws -> URL {
-        let fileManager = FileManager.default
+    static func resolveExecutableURL(
+        fileManager: FileManager = .default,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws -> URL {
         for candidate in commandCandidates where fileManager.isExecutableFile(atPath: candidate) {
             return URL(fileURLWithPath: candidate)
         }
 
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
+        if let path = environment["PATH"] {
             for directory in path.split(separator: ":") {
                 let candidate = String(directory) + "/codex"
                 if fileManager.isExecutableFile(atPath: candidate) {
@@ -145,7 +249,7 @@ struct CodexAuthClient: Sendable {
         throw CodexAuthError.launcherNotFound
     }
 
-    private func send(_ payload: [String: Any], to handle: FileHandle) throws {
+    private static func send(_ payload: [String: Any], to handle: FileHandle) throws {
         let data = try JSONSerialization.data(withJSONObject: payload)
         handle.write(data)
         handle.write(Data([0x0A]))

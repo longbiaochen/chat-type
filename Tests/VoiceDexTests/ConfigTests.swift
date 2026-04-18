@@ -1,33 +1,31 @@
 import Foundation
 import Testing
-@testable import VoiceDex
+@testable import ChatType
 
 @Test
-func defaultConfigUsesPublicLaunchDefaults() throws {
+func defaultConfigUsesChatTypeDesktopLoginDefaults() throws {
     let config = AppConfig()
     #expect(config.transcription.hotkeyKeyCode == 96)
-    #expect(config.transcription.provider == .openAICompatible)
+    #expect(config.transcription.provider == .codexChatGPTBridge)
     #expect(config.transcription.openAITranscriptionURL == "https://api.openai.com/v1/audio/transcriptions")
     #expect(config.transcription.openAIModel == "gpt-4o-mini-transcribe")
     #expect(config.transcription.openAIAuthTokenEnv == "OPENAI_API_KEY")
-    #expect(config.cleanup.enabled == true)
-    #expect(config.cleanup.endpoint == "https://api.openai.com/v1/chat/completions")
-    #expect(config.cleanup.model == "gpt-4.1-mini")
-    #expect(config.cleanup.authTokenEnv == "OPENAI_API_KEY")
+    #expect(config.transcription.hintTerms.isEmpty)
     #expect(config.transcription.chatGPTURL == "https://chatgpt.com/backend-api/transcribe")
 }
 
 @Test
-func configRoundTripPreservesCustomCleanupPrompt() throws {
+func configRoundTripPreservesHiddenHintTerms() throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
     var config = AppConfig()
-    config.cleanup.enabled = true
-    config.cleanup.endpoint = "https://example.com/v1/chat/completions"
-    config.cleanup.model = "gpt-test"
-    config.cleanup.systemPrompt = "Keep commands untouched."
+    config.transcription.hintTerms = [
+        "budget v2.xlsx",
+        "ChatType",
+        "review",
+    ]
 
     let configURL = directory.appendingPathComponent("config.json")
     let encoder = JSONEncoder()
@@ -35,6 +33,29 @@ func configRoundTripPreservesCustomCleanupPrompt() throws {
     try encoder.encode(config).write(to: configURL)
 
     let decoded = try JSONDecoder().decode(AppConfig.self, from: Data(contentsOf: configURL))
-    #expect(decoded.cleanup.systemPrompt == "Keep commands untouched.")
-    #expect(decoded.cleanup.model == "gpt-test")
+    #expect(decoded.transcription.hintTerms == [
+        "budget v2.xlsx",
+        "ChatType",
+        "review",
+    ])
+}
+
+@Test
+func legacyCleanupConfigStillDecodesWithoutCrash() throws {
+    let json = """
+    {
+      "cleanup": {
+        "enabled": true,
+        "endpoint": "https://example.com/v1/chat/completions",
+        "model": "legacy-cleanup-model",
+        "systemPrompt": "Legacy prompt",
+        "authTokenEnv": "LEGACY_KEY",
+        "authHeaderPrefix": "Bearer"
+      }
+    }
+    """.data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: json)
+    #expect(decoded.transcription.provider == .codexChatGPTBridge)
+    #expect(decoded.transcription.hintTerms.isEmpty)
 }

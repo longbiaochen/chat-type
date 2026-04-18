@@ -3,20 +3,22 @@
 import PackageDescription
 
 let package = Package(
-    name: "voice-dex",
+    name: "ChatType",
     platforms: [
         .macOS(.v13),
     ],
     products: [
-        .executable(name: "VoiceDex", targets: ["VoiceDex"]),
+        .executable(name: "ChatType", targets: ["ChatType"]),
     ],
     targets: [
         .executableTarget(
-            name: "VoiceDex"
+            name: "ChatType",
+            path: "Sources/VoiceDex"
         ),
         .testTarget(
-            name: "VoiceDexTests",
-            dependencies: ["VoiceDex"]
+            name: "ChatTypeTests",
+            dependencies: ["ChatType"],
+            path: "Tests/VoiceDexTests"
         ),
     ],
     swiftLanguageModes: [.v6]

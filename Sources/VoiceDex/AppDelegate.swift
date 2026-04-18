@@ -5,7 +5,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         coordinator = AppCoordinator()
-        coordinator?.start()
+        coordinator?.start(
+            launchMode: AppLaunchMode.resolve(
+                environment: ProcessInfo.processInfo.environment
+            )
+        )
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {

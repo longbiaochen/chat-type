@@ -13,6 +13,8 @@ final class AppCoordinator {
     private let notifier = Notifier()
     private let injector = TextInjector()
     private let overlay = OverlayController()
+    private let authClient = CodexAuthClient()
+    private let latencyRecorder = LatencyRecorder()
 
     private var config = AppConfig()
     private var hotkeyMonitor: HotkeyMonitor?
@@ -20,29 +22,54 @@ final class AppCoordinator {
     private var statusMenu: StatusMenuController?
     private var preferencesWindowController: PreferencesWindowController?
     private var state: State = .idle
+    private var recordingLevelTimer: Timer?
+    private var overlayDemoFrameIndex = 0
 
-    func start() {
+    func start(launchMode: AppLaunchMode = .normal) {
         do {
-            config = try configStore.load()
-            recorder = AudioRecorder(sampleRateHz: config.transcription.sampleRateHz)
-
             statusMenu = StatusMenuController(
                 openSettingsHandler: { [weak self] in self?.openSettings() },
                 openConfigHandler: { [weak self] in self?.openConfigFolder() },
                 quitHandler: { NSApplication.shared.terminate(nil) }
             )
-            statusMenu?.update(stateLabel: "vd", detail: "Ready")
 
-            hotkeyMonitor = try HotkeyMonitor(keyCode: config.transcription.hotkeyKeyCode) { [weak self] in
-                Task { @MainActor in
-                    self?.handleHotkeyPress()
+            switch launchMode {
+            case .normal:
+                config = try configStore.load()
+                recorder = AudioRecorder(sampleRateHz: config.transcription.sampleRateHz)
+                refreshReadyState()
+                prewarmAuthIfNeeded()
+
+                hotkeyMonitor = try HotkeyMonitor(keyCode: config.transcription.hotkeyKeyCode) { [weak self] in
+                    Task { @MainActor in
+                        self?.handleHotkeyPress()
+                    }
                 }
+                notifier.ensureAuthorization()
+            case .overlayDemo:
+                config = (try? configStore.load()) ?? AppConfig()
+                runOverlayDemo()
+                return
+            case .benchmark:
+                config = try configStore.load()
+                Task {
+                    defer { NSApplication.shared.terminate(nil) }
+                    do {
+                        let runner = BenchmarkRunner(
+                            config: config,
+                            authClient: authClient
+                        )
+                        try await runner.run()
+                    } catch {
+                        print("Benchmark failed: \(error.localizedDescription)")
+                    }
+                }
+                return
             }
-            notifier.ensureAuthorization()
         } catch {
             NSSound.beep()
-            notifier.notify(title: "voice-dex launch failed", body: error.localizedDescription)
-            statusMenu?.update(stateLabel: "ERR", detail: error.localizedDescription)
+            notifier.notify(title: "ChatType launch failed", body: error.localizedDescription)
+            statusMenu?.update(state: .error, detail: error.localizedDescription)
         }
     }
 
@@ -65,27 +92,31 @@ final class AppCoordinator {
                 environment: ProcessInfo.processInfo.environment
             )
         ) {
+            stopRecordingLevelUpdates()
             state = .idle
-            statusMenu?.update(stateLabel: "ERR", detail: "Fix settings before recording")
+            statusMenu?.update(state: .setupRequired, detail: message)
             overlay.showError(message)
-            notifier.notify(title: "voice-dex setup required", body: message)
+            notifier.notify(title: "ChatType setup required", body: message)
+            openSettings()
             return
         }
 
         state = .processing
-        statusMenu?.update(stateLabel: "…", detail: "Requesting microphone")
+        statusMenu?.update(state: .processing, detail: "Requesting microphone")
         overlay.showRecording()
 
         Task { @MainActor in
             do {
                 try await recorder.startRecording()
                 state = .recording
-                statusMenu?.update(stateLabel: "REC", detail: "Recording on F5")
+                statusMenu?.update(state: .recording, detail: "Recording on F5")
+                startRecordingLevelUpdates()
             } catch {
+                stopRecordingLevelUpdates()
                 state = .idle
-                statusMenu?.update(stateLabel: "vd", detail: error.localizedDescription)
+                refreshReadyState(detailOverride: error.localizedDescription, state: .error)
                 overlay.showError(error.localizedDescription)
-                notifier.notify(title: "voice-dex", body: error.localizedDescription)
+                notifier.notify(title: "ChatType", body: error.localizedDescription)
             }
         }
     }
@@ -94,64 +125,101 @@ final class AppCoordinator {
         guard let recorder else { return }
 
         do {
+            stopRecordingLevelUpdates()
             let audio = try recorder.stopRecording()
             state = .processing
-            statusMenu?.update(stateLabel: "…", detail: "Transcribing")
-            overlay.showProcessing(provider: config.transcription.provider.title)
+            statusMenu?.update(state: .processing, detail: "Processing")
+            overlay.showProcessing()
 
             let transcriptionConfig = config.transcription
-            let cleanupConfig = config.cleanup
             let injectionConfig = config.injection
+            let processingStarted = DispatchTime.now().uptimeNanoseconds
 
-            Task.detached {
-                let transcriber = ChatGPTTranscriber(
-                    authClient: CodexAuthClient(),
-                    config: transcriptionConfig
+            Task {
+                let pipeline = DictationPipeline(
+                    transcriber: ChatGPTTranscriber(
+                        authClient: authClient,
+                        config: transcriptionConfig
+                    ),
+                    normalizer: TerminologyNormalizer(),
+                    hintTerms: transcriptionConfig.hintTerms
                 )
-                let postProcessor = TextPostProcessor(cleanup: cleanupConfig)
 
                 do {
-                    let rawText = try await transcriber.transcribe(audio)
-                    let finalText = try await postProcessor.processIfNeeded(rawText)
+                    let prepared = try await pipeline.prepare(audio: audio)
 
                     await MainActor.run {
                         do {
-                            let outcome = try self.injector.inject(
-                                text: finalText,
+                            let injectStarted = DispatchTime.now().uptimeNanoseconds
+                            let outcome = try injector.inject(
+                                text: prepared.finalText,
                                 preserveClipboard: injectionConfig.preserveClipboard,
                                 restoreDelayMilliseconds: injectionConfig.restoreDelayMilliseconds
                             )
-                            self.state = .idle
-                            switch outcome {
-                            case .pasted:
-                                self.statusMenu?.update(stateLabel: "vd", detail: "Pasted into the focused app")
-                            case .copiedToClipboard(let reason):
-                                self.statusMenu?.update(stateLabel: "vd", detail: reason.statusDetail)
-                            }
-                            self.overlay.showResult(text: finalText, outcome: outcome)
+                            let injectMs = elapsedMilliseconds(since: injectStarted)
+                            let totalProcessingMs = elapsedMilliseconds(since: processingStarted)
+                            recordLatency(
+                                prepared: prepared,
+                                outcome: outcome,
+                                injectMs: injectMs,
+                                totalProcessingMs: totalProcessingMs,
+                                errorCategory: nil
+                            )
+                            state = .idle
+                            statusMenu?.update(
+                                state: .ready,
+                                detail: statusDetail(for: outcome)
+                            )
+                            overlay.showResult(text: prepared.finalText, outcome: outcome)
                         } catch {
-                            self.state = .idle
-                            self.statusMenu?.update(stateLabel: "ERR", detail: error.localizedDescription)
-                            self.overlay.showError(error.localizedDescription)
-                            self.notifier.notify(title: "voice-dex", body: error.localizedDescription)
+                            let totalProcessingMs = elapsedMilliseconds(since: processingStarted)
+                            recordLatency(
+                                prepared: prepared,
+                                outcome: nil,
+                                injectMs: 0,
+                                totalProcessingMs: totalProcessingMs,
+                                errorCategory: "inject"
+                            )
+                            stopRecordingLevelUpdates()
+                            state = .idle
+                            statusMenu?.update(state: .error, detail: error.localizedDescription)
+                            overlay.showError(error.localizedDescription)
+                            notifier.notify(title: "ChatType", body: error.localizedDescription)
                         }
                     }
                 } catch {
                     await MainActor.run {
-                        self.state = .idle
-                        self.statusMenu?.update(stateLabel: "ERR", detail: error.localizedDescription)
-                        self.overlay.showError(error.localizedDescription)
-                        self.notifier.notify(title: "voice-dex", body: error.localizedDescription)
+                        let totalProcessingMs = elapsedMilliseconds(since: processingStarted)
+                        let sample = LatencySample(
+                            timestamp: Date(),
+                            audioDurationMs: audio.durationMs,
+                            audioBytes: (try? Data(contentsOf: audio.fileURL).count) ?? 0,
+                            provider: transcriptionConfig.provider.rawValue,
+                            authMs: 0,
+                            transcribeMs: 0,
+                            normalizationMs: 0,
+                            injectMs: 0,
+                            totalProcessingMs: totalProcessingMs,
+                            resultStatus: "error",
+                            errorCategory: "transcribe"
+                        )
+                        try? latencyRecorder.record(sample)
+                        stopRecordingLevelUpdates()
+                        state = .idle
+                        statusMenu?.update(state: .error, detail: error.localizedDescription)
+                        overlay.showError(error.localizedDescription)
+                        notifier.notify(title: "ChatType", body: error.localizedDescription)
                     }
                 }
 
                 try? FileManager.default.removeItem(at: audio.fileURL)
             }
         } catch {
+            stopRecordingLevelUpdates()
             state = .idle
-            statusMenu?.update(stateLabel: "ERR", detail: error.localizedDescription)
+            statusMenu?.update(state: .error, detail: error.localizedDescription)
             overlay.showError(error.localizedDescription)
-            notifier.notify(title: "voice-dex", body: error.localizedDescription)
+            notifier.notify(title: "ChatType", body: error.localizedDescription)
         }
     }
 
@@ -164,10 +232,11 @@ final class AppCoordinator {
                     do {
                         try self.configStore.save(newConfig)
                         self.config = newConfig
-                        self.statusMenu?.update(stateLabel: "vd", detail: "Settings saved")
+                        self.refreshReadyState(detailOverride: "Settings saved", state: .ready)
+                        self.prewarmAuthIfNeeded()
                     } catch {
                         self.overlay.showError(error.localizedDescription)
-                        self.notifier.notify(title: "voice-dex", body: error.localizedDescription)
+                        self.notifier.notify(title: "ChatType", body: error.localizedDescription)
                     }
                 },
                 onOpenConfigFolder: { [weak self] in
@@ -183,5 +252,132 @@ final class AppCoordinator {
         let directoryURL = configStore.directoryURL
         try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         NSWorkspace.shared.open(directoryURL)
+    }
+
+    private func runOverlayDemo() {
+        let demoLevels: [CGFloat] = [0.14, 0.28, 0.46, 0.72, 0.54, 0.32, 0.18, 0.64]
+
+        state = .processing
+        statusMenu?.update(state: .demo, detail: "Overlay demo")
+        overlay.showRecording()
+        overlayDemoFrameIndex = 0
+
+        recordingLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let level = demoLevels[self.overlayDemoFrameIndex % demoLevels.count]
+                self.overlayDemoFrameIndex += 1
+                self.overlay.updateRecordingLevel(level)
+            }
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            try? await Task.sleep(nanoseconds: 1_400_000_000)
+            self.stopRecordingLevelUpdates()
+            self.overlay.showProcessing()
+
+            try? await Task.sleep(nanoseconds: 1_300_000_000)
+            self.overlay.showResult(text: "Demo", outcome: .pasted)
+
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            self.overlay.showError("Clipboard only")
+
+            try? await Task.sleep(nanoseconds: 2_400_000_000)
+            NSApplication.shared.terminate(nil)
+        }
+    }
+
+    private func startRecordingLevelUpdates() {
+        stopRecordingLevelUpdates()
+        overlay.showRecording()
+
+        recordingLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, let level = self.recorder?.currentLevel() else {
+                    return
+                }
+                self.overlay.updateRecordingLevel(level)
+            }
+        }
+    }
+
+    private func stopRecordingLevelUpdates() {
+        recordingLevelTimer?.invalidate()
+        recordingLevelTimer = nil
+    }
+
+    private func statusDetail(for outcome: InjectionOutcome) -> String {
+        switch outcome {
+        case .pasted:
+            return "Pasted transcript"
+        case .copiedToClipboard(let reason):
+            return reason.statusDetail
+        }
+    }
+
+    private func prewarmAuthIfNeeded() {
+        guard config.transcription.provider == .codexChatGPTBridge else {
+            return
+        }
+
+        Task.detached(priority: .utility) { [authClient] in
+            try? authClient.prewarmChatGPTStatus()
+        }
+    }
+
+    private func recordLatency(
+        prepared: PreparedDictation,
+        outcome: InjectionOutcome?,
+        injectMs: Int,
+        totalProcessingMs: Int,
+        errorCategory: String?
+    ) {
+        let sample = LatencySample(
+            timestamp: Date(),
+            audioDurationMs: prepared.metrics.transcription.audioDurationMs,
+            audioBytes: prepared.metrics.transcription.audioBytes,
+            provider: prepared.metrics.transcription.provider.rawValue,
+            authMs: prepared.metrics.transcription.authMs,
+            transcribeMs: prepared.metrics.transcription.transcribeMs,
+            normalizationMs: prepared.metrics.normalizationMs,
+            injectMs: injectMs,
+            totalProcessingMs: totalProcessingMs,
+            resultStatus: latencyResultStatus(for: outcome),
+            errorCategory: errorCategory
+        )
+        try? latencyRecorder.record(sample)
+    }
+
+    private func latencyResultStatus(for outcome: InjectionOutcome?) -> String {
+        guard let outcome else {
+            return "error"
+        }
+
+        switch outcome {
+        case .pasted:
+            return "pasted"
+        case .copiedToClipboard:
+            return "clipboard"
+        }
+    }
+
+    private func elapsedMilliseconds(since start: UInt64) -> Int {
+        Int((DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
+    }
+
+    private func refreshReadyState(detailOverride: String? = nil, state: StatusMenuVisualState = .ready) {
+        let issues = RuntimePreflight.issues(
+            for: config,
+            environment: ProcessInfo.processInfo.environment
+        )
+        if let detailOverride {
+            statusMenu?.update(state: state, detail: detailOverride)
+        } else if let summary = RuntimePreflight.summary(for: issues) {
+            statusMenu?.update(state: .setupRequired, detail: summary)
+        } else {
+            statusMenu?.update(state: state, detail: "Ready. Press F5 to dictate")
+        }
     }
 }

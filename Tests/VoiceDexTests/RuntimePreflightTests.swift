@@ -1,34 +1,55 @@
 import Foundation
 import Testing
-@testable import VoiceDex
+@testable import ChatType
 
 @Test
-func preflightRequiresOpenAIKeyForPublicLaunchDefaults() {
-    let issues = RuntimePreflight.issues(for: AppConfig(), environment: [:])
-
-    #expect(
-        issues == [
-            .missingTranscriptionAuthToken("OPENAI_API_KEY"),
-            .missingCleanupAuthToken("OPENAI_API_KEY"),
-        ]
+func preflightRequiresDesktopHostForChatTypeDefaults() {
+    let issues = RuntimePreflight.issues(
+        for: AppConfig(),
+        environment: [:],
+        authStatusProvider: {
+            throw CodexAuthError.launcherNotFound
+        }
     )
+
+    #expect(issues == [.missingDesktopHost])
 }
 
 @Test
-func preflightRequiresCleanupEndpointAndModelWhenCleanupEnabled() {
+func preflightRequiresChatGPTLoginWhenCodexIsNotSignedInWithChatGPT() {
+    let issues = RuntimePreflight.issues(
+        for: AppConfig(),
+        environment: [:],
+        authStatusProvider: {
+            throw CodexAuthError.notChatGPT
+        }
+    )
+
+    #expect(issues == [.hostLoginRequired])
+}
+
+@Test
+func preflightRequiresOpenAIKeyInRecoveryMode() {
     var config = AppConfig()
-    config.cleanup.endpoint = ""
-    config.cleanup.model = ""
+    config.transcription.provider = .openAICompatible
+
+    let issues = RuntimePreflight.issues(for: config, environment: [:])
+
+    #expect(issues == [.missingTranscriptionAuthToken("OPENAI_API_KEY")])
+}
+
+@Test
+func legacyCleanupConfigDoesNotAddDesktopHostRequirementToRecoveryMode() {
+    var config = AppConfig()
+    config.transcription.provider = .openAICompatible
 
     let issues = RuntimePreflight.issues(
         for: config,
-        environment: ["OPENAI_API_KEY": "test-key"]
+        environment: ["OPENAI_API_KEY": "test-key"],
+        authStatusProvider: {
+            throw CodexAuthError.launcherNotFound
+        }
     )
 
-    #expect(
-        issues == [
-            .missingCleanupEndpoint,
-            .missingCleanupModel,
-        ]
-    )
+    #expect(issues.isEmpty)
 }

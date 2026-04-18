@@ -2,19 +2,13 @@ import Foundation
 
 struct AppConfig: Codable, Sendable {
     var transcription: TranscriptionConfig = .init()
-    var cleanup: CleanupConfig = .init()
     var injection: InjectionConfig = .init()
-
-    static let defaultCleanupPrompt = """
-    只做轻量润色：修正标点、大小写、空格和明显语病；保持原意、语气和结构；保持中英混合原样；不要翻译；不要删减信息；不要改动代码、命令、文件路径、URL、邮箱、版本号、参数名、产品名。
-    """
 
     init() {}
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         transcription = try container.decodeIfPresent(TranscriptionConfig.self, forKey: .transcription) ?? .init()
-        cleanup = try container.decodeIfPresent(CleanupConfig.self, forKey: .cleanup) ?? .init()
         injection = try container.decodeIfPresent(InjectionConfig.self, forKey: .injection) ?? .init()
     }
 }
@@ -28,24 +22,24 @@ enum TranscriptionProvider: String, Codable, Sendable, CaseIterable, Identifiabl
     var title: String {
         switch self {
         case .codexChatGPTBridge:
-            return "Codex Bridge"
+            return "ChatGPT Desktop Login"
         case .openAICompatible:
-            return "OpenAI-Compatible"
+            return "OpenAI-Compatible Recovery"
         }
     }
 
     var caption: String {
         switch self {
         case .codexChatGPTBridge:
-            return "Experimental. Uses local Codex login state and is not the recommended public launch path."
+            return "Recommended. Uses your signed-in local Codex desktop session. No API key required."
         case .openAICompatible:
-            return "Recommended. Stable OpenAI-compatible transcription with your own API key."
+            return "Advanced recovery route. Bring your own OpenAI-compatible API only if the desktop login path is unavailable."
         }
     }
 }
 
 struct TranscriptionConfig: Codable, Sendable {
-    var provider: TranscriptionProvider = .openAICompatible
+    var provider: TranscriptionProvider = .codexChatGPTBridge
     var hotkeyKeyCode: UInt32 = 96
     var chatGPTURL: String = "https://chatgpt.com/backend-api/transcribe"
     var openAITranscriptionURL: String = "https://api.openai.com/v1/audio/transcriptions"
@@ -53,6 +47,7 @@ struct TranscriptionConfig: Codable, Sendable {
     var openAIAuthTokenEnv: String = "OPENAI_API_KEY"
     var sampleRateHz: Int = 24_000
     var maxDurationSeconds: Int = 120
+    var hintTerms: [String] = []
 
     init() {}
 
@@ -66,27 +61,7 @@ struct TranscriptionConfig: Codable, Sendable {
         openAIAuthTokenEnv = try container.decodeIfPresent(String.self, forKey: .openAIAuthTokenEnv) ?? "OPENAI_API_KEY"
         sampleRateHz = try container.decodeIfPresent(Int.self, forKey: .sampleRateHz) ?? 24_000
         maxDurationSeconds = try container.decodeIfPresent(Int.self, forKey: .maxDurationSeconds) ?? 120
-    }
-}
-
-struct CleanupConfig: Codable, Sendable {
-    var enabled: Bool = true
-    var endpoint: String = "https://api.openai.com/v1/chat/completions"
-    var model: String = "gpt-4.1-mini"
-    var systemPrompt: String = AppConfig.defaultCleanupPrompt
-    var authTokenEnv: String = "OPENAI_API_KEY"
-    var authHeaderPrefix: String = "Bearer"
-
-    init() {}
-
-    init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
-        endpoint = try container.decodeIfPresent(String.self, forKey: .endpoint) ?? ""
-        model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
-        systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt) ?? AppConfig.defaultCleanupPrompt
-        authTokenEnv = try container.decodeIfPresent(String.self, forKey: .authTokenEnv) ?? "OPENAI_API_KEY"
-        authHeaderPrefix = try container.decodeIfPresent(String.self, forKey: .authHeaderPrefix) ?? "Bearer"
+        hintTerms = try container.decodeIfPresent([String].self, forKey: .hintTerms) ?? []
     }
 }
 
@@ -104,15 +79,12 @@ struct InjectionConfig: Codable, Sendable {
 }
 
 enum ConfigError: LocalizedError {
-    case missingEndpoint
-    case missingModel
+    case invalidPromptOutput
 
     var errorDescription: String? {
         switch self {
-        case .missingEndpoint:
-            return "Cleanup 已启用，但没有配置 cleanup.endpoint。"
-        case .missingModel:
-            return "Cleanup 已启用，但没有配置 cleanup.model。"
+        case .invalidPromptOutput:
+            return "转写提示词返回了空文本。"
         }
     }
 }
@@ -122,26 +94,30 @@ struct ConfigStore {
 
     var directoryURL: URL {
         fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/VoiceDex", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/ChatType", isDirectory: true)
     }
 
-    var legacyDirectoryURL: URL {
-        fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/HotkeyVoice", isDirectory: true)
+    var legacyDirectoryURLs: [URL] {
+        [
+            fileManager.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/VoiceDex", isDirectory: true),
+            fileManager.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/HotkeyVoice", isDirectory: true),
+        ]
+    }
+
+    var legacyConfigURLs: [URL] {
+        legacyDirectoryURLs.map { $0.appendingPathComponent("config.json") }
     }
 
     var configURL: URL {
         directoryURL.appendingPathComponent("config.json")
     }
 
-    var legacyConfigURL: URL {
-        legacyDirectoryURL.appendingPathComponent("config.json")
-    }
-
     func load() throws -> AppConfig {
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         if !fileManager.fileExists(atPath: configURL.path),
-           fileManager.fileExists(atPath: legacyConfigURL.path) {
+           let legacyConfigURL = legacyConfigURLs.first(where: { fileManager.fileExists(atPath: $0.path) }) {
             try fileManager.copyItem(at: legacyConfigURL, to: configURL)
         }
 

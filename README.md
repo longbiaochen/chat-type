@@ -1,145 +1,153 @@
-# voice-dex
+# ChatType
 
-`voice-dex` is a native macOS dictation app built for a fast `F5 -> speak -> AI cleanup -> paste or clipboard` workflow.
+`ChatType` is a native macOS dictation app for people who already use ChatGPT through a local Codex desktop session and want the fastest possible `F5 -> speak -> paste` workflow.
 
-It is designed as a lightweight operator tool:
+It is intentionally opinionated:
 
 - global `F5` hotkey
-- floating HUD during recording and processing
-- AI cleanup enabled by default
-- paste directly into the focused editor when possible
-- fall back to clipboard when there is no editable target
-- local Codex bridge support plus a stable OpenAI-compatible transcription path
+- native menu bar app
+- zero-config default route through your local Codex desktop login state
+- single-stage STT output tuned for direct paste
+- conservative paste behavior
+- clipboard fallback when paste is not safe
+- optional advanced recovery route for OpenAI-compatible APIs
 
-## Project Status
+The repository name is still `voice-dex`, but the launch product is `ChatType`.
 
-`voice-dex` `v0.1.0` is the first public launch build. It is optimized for Apple Silicon Macs and ships as an ad-hoc signed, non-notarized `.app` plus a release zip.
+## Product Promise
 
-## Features
+- No extra dictation subscription
+- No API key in the normal path
+- No local model download or tuning
+- Install once, sign into Codex on this Mac, press `F5`, speak, and get text back
 
-- Native menu bar app built with Swift and AppKit/SwiftUI
-- Toggle recording on `F5`
-- Floating HUD inspired by modern macOS dictation utilities
-- Configurable transcription provider:
-  - `openAICompatible` (recommended)
-  - `codexChatGPTBridge` (experimental)
-- Second-pass cleanup through an OpenAI-compatible chat endpoint
-- Smart insertion:
-  - paste when an editable field is focused
-  - otherwise keep the result in the clipboard
-  - when Accessibility permission is missing, explain the clipboard fallback
-- Settings window for runtime configuration
-- LaunchAgent install script for background startup
+## Current Status
 
-## Repository Layout
+`ChatType` `v0.1.0` is the first packaged launch candidate. It ships as an ad-hoc signed, non-notarized `.app` plus GitHub release `.zip` and `.dmg` artifacts.
 
-```text
-Sources/VoiceDex/        App source
-Tests/VoiceDexTests/     Swift tests
-script/build_and_run.sh  Local build and launch entrypoint
-scripts/check.sh         Build + test harness
-scripts/package_app.sh   Build the packaged app and release zip
-scripts/install_launch_agent.sh  Install background startup
-docs/                    Architecture and release docs
-version.env              Single version source for packaging
-```
+## How It Works
 
-## Requirements
+1. Install `ChatType`
+2. Launch it on a Mac that already has Codex desktop installed and signed in with ChatGPT
+3. Grant microphone permission
+4. Grant Accessibility if you want auto-paste
+5. Put the cursor in Notes, Mail, Slack, or another editable target
+6. Press `F5`, speak, press `F5` again
+7. `ChatType` sends the recording through the local login-state bridge to the ChatGPT backend transcription path
+8. `ChatType` applies a deterministic terminology-preservation pass when you define hidden `hintTerms`
+9. The result is pasted into the focused app or left in the clipboard when paste is not safe
 
-- macOS 13+
-- Apple Silicon recommended
-- `OPENAI_API_KEY` exported in the environment that launches the app
-- Accessibility permission for automatic paste
-- Microphone permission for recording
+## Installation
 
-## Quick Start
+### Downloaded app
 
-1. Export your API key:
-
-```bash
-export OPENAI_API_KEY=your_key_here
-```
-
-2. Build and package the app:
+1. Build and package:
 
 ```bash
 ./scripts/package_app.sh
 ```
 
-3. Launch the packaged app:
+2. Launch:
 
 ```bash
-open -n dist/VoiceDex.app
+open -n dist/ChatType.app
 ```
 
-4. Grant permissions when prompted:
-   - Microphone for recording
-   - Accessibility for automatic paste
-
-5. Put the cursor in TextEdit or another editable field, press `F5`, speak, then press `F5` again.
-
-## Installation Notes
-
-The public launch build is ad-hoc signed and **not notarized**. On first install, macOS may block the app.
-
-- In Finder, right-click `VoiceDex.app`, then choose `Open`
-- Or remove quarantine manually:
+3. If macOS blocks the app on first launch:
 
 ```bash
-xattr -dr com.apple.quarantine /path/to/VoiceDex.app
+xattr -dr com.apple.quarantine /path/to/ChatType.app
 ```
 
-The packaging script also creates a release asset zip at:
+### Homebrew Cask metadata
+
+Homebrew packaging metadata lives at:
 
 ```text
-dist/VoiceDex-0.1.0-macos-arm64.zip
+packaging/homebrew/Casks/chattype.rb
 ```
 
-## Build
+This repo does not yet publish a dedicated Homebrew tap, but the cask file is kept current with the release artifact format.
+
+## Advanced Recovery Route
+
+If the desktop-login path is unavailable, `ChatType` still includes an advanced recovery route for OpenAI-compatible transcription APIs.
+
+That route is intentionally not part of the default onboarding. It requires:
+
+- your own endpoint
+- your own model choice
+- your own API key environment variable
+
+## Output Quality
+
+`ChatType` no longer uses a second AI cleanup pass in the default product path.
+
+Instead it improves output at transcription time:
+
+- OpenAI-compatible recovery uses the official transcription `prompt` parameter
+- the desktop-login bridge attempts the same prompt and automatically retries without it if the private route rejects that field
+- optional hidden `transcription.hintTerms` preserve filenames, product names, and other critical terms without another model call
+
+## Repository Layout
+
+```text
+Sources/VoiceDex/                 App source for the ChatType executable target
+Tests/VoiceDexTests/              Swift tests
+script/build_and_run.sh           Canonical local launch path
+scripts/check.sh                  Build + test harness
+scripts/package_app.sh            Builds dist/ChatType.app plus release zip and dmg
+packaging/homebrew/Casks/         Homebrew Cask metadata
+scripts/install_launch_agent.sh   Installs LaunchAgent for ChatType
+docs/                             Product and release docs
+version.env                       Version metadata source
+```
+
+## Build And Verify
 
 ```bash
 swift build --package-path .
-```
-
-## Test
-
-```bash
 swift test --package-path .
 ./scripts/check.sh
-```
-
-## Run
-
-```bash
 ./script/build_and_run.sh
 ```
 
-This builds `dist/VoiceDex.app`, creates the release zip, signs the app locally with an ad-hoc signature, and launches it.
-
-## Install Background Startup
+Benchmark the real packaged path with your own sample audio:
 
 ```bash
-./scripts/install_launch_agent.sh
+./scripts/benchmark_stt.sh ~/bench/3s.wav ~/bench/10s.wav ~/bench/30s.wav
 ```
 
 ## Config
 
-The app stores config at:
+`ChatType` stores runtime config at:
 
 ```text
-~/Library/Application Support/VoiceDex/config.json
+~/Library/Application Support/ChatType/config.json
 ```
 
-If an older `HotkeyVoice` config exists, `voice-dex` migrates it on first launch.
+It migrates older config from:
 
-## Publishing Notes
+- `~/Library/Application Support/VoiceDex/config.json`
+- `~/Library/Application Support/HotkeyVoice/config.json`
 
-See:
+## Risks And Boundaries
+
+`ChatType` V1 deliberately depends on a private backend path plus a local signed-in Codex desktop session.
+
+That means:
+
+- it is fast and simple for existing ChatGPT desktop users
+- it may break if upstream desktop-login or backend behavior changes
+- it is not positioned as an enterprise-safe or long-term stable public API integration
+- the desktop bridge prompt path is opportunistic and falls back to plain transcription if unsupported
+
+## Docs
 
 - [Architecture](docs/architecture.md)
 - [Release Process](docs/release.md)
-- [GitHub Release Notes](docs/releases/v0.1.0.md)
-- [Contributing](CONTRIBUTING.md)
+- [Release Notes](docs/releases/v0.1.0.md)
+- [Product PRD](docs/chattype-v1-prd.md)
 
 ## License
 

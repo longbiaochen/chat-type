@@ -23,11 +23,63 @@ enum TranscriptionError: LocalizedError {
     }
 }
 
+struct TranscriptionMetrics: Sendable, Equatable {
+    let provider: TranscriptionProvider
+    let audioDurationMs: Int
+    let audioBytes: Int
+    let authMs: Int
+    let transcribeMs: Int
+    let promptIncluded: Bool
+}
+
+struct TranscriptionResult: Sendable, Equatable {
+    let text: String
+    let metrics: TranscriptionMetrics
+}
+
+final class BridgePromptCapabilityStore: @unchecked Sendable {
+    static let shared = BridgePromptCapabilityStore()
+
+    private let lock = NSLock()
+    private var supportsPrompt: Bool?
+
+    func value() -> Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return supportsPrompt
+    }
+
+    func mark(_ value: Bool) {
+        lock.lock()
+        supportsPrompt = value
+        lock.unlock()
+    }
+}
+
 struct ChatGPTTranscriber: Sendable {
     let authClient: CodexAuthClient
     let config: TranscriptionConfig
+    let promptBuilder: TranscriptionPromptBuilder
+    let bridgePromptCapability: BridgePromptCapabilityStore
+    let dataLoader: @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
-    func transcribe(_ audio: RecordedAudio) async throws -> String {
+    init(
+        authClient: CodexAuthClient,
+        config: TranscriptionConfig,
+        promptBuilder: TranscriptionPromptBuilder = .init(),
+        bridgePromptCapability: BridgePromptCapabilityStore = .shared,
+        dataLoader: @escaping @Sendable (URLRequest) async throws -> (Data, URLResponse) = { request in
+            try await URLSession.shared.data(for: request)
+        }
+    ) {
+        self.authClient = authClient
+        self.config = config
+        self.promptBuilder = promptBuilder
+        self.bridgePromptCapability = bridgePromptCapability
+        self.dataLoader = dataLoader
+    }
+
+    func transcribe(_ audio: RecordedAudio) async throws -> TranscriptionResult {
         let data = try Data(contentsOf: audio.fileURL)
         guard !data.isEmpty else {
             throw TranscriptionError.invalidAudio
@@ -36,19 +88,103 @@ struct ChatGPTTranscriber: Sendable {
             throw TranscriptionError.payloadTooLarge
         }
 
+        let prompt = promptBuilder.buildPrompt(hintTerms: config.hintTerms)
+
         switch config.provider {
         case .codexChatGPTBridge:
-            let authStatus = try authClient.fetchAuthStatus(includeToken: true, refreshToken: true)
+            let authStarted = DispatchTime.now().uptimeNanoseconds
+            let authStatus = try authClient.fetchBestAvailableAuthStatus(includeToken: true)
+            let authMs = elapsedMilliseconds(since: authStarted)
             guard let token = authStatus.authToken else {
                 throw CodexAuthError.missingToken
             }
-            return try await transcribeViaChatGPTBridge(audioData: data, token: token)
+            let transcribeStarted = DispatchTime.now().uptimeNanoseconds
+            let response = try await transcribeViaChatGPTBridge(
+                audioData: data,
+                token: token,
+                prompt: prompt
+            )
+            let transcribeMs = elapsedMilliseconds(since: transcribeStarted)
+            return TranscriptionResult(
+                text: response.text,
+                metrics: TranscriptionMetrics(
+                    provider: .codexChatGPTBridge,
+                    audioDurationMs: audio.durationMs,
+                    audioBytes: data.count,
+                    authMs: authMs,
+                    transcribeMs: transcribeMs,
+                    promptIncluded: response.promptIncluded
+                )
+            )
         case .openAICompatible:
-            return try await transcribeViaOpenAICompatible(audioData: data)
+            let transcribeStarted = DispatchTime.now().uptimeNanoseconds
+            let text = try await transcribeViaOpenAICompatible(
+                audioData: data,
+                prompt: prompt
+            )
+            let transcribeMs = elapsedMilliseconds(since: transcribeStarted)
+            return TranscriptionResult(
+                text: text,
+                metrics: TranscriptionMetrics(
+                    provider: .openAICompatible,
+                    audioDurationMs: audio.durationMs,
+                    audioBytes: data.count,
+                    authMs: 0,
+                    transcribeMs: transcribeMs,
+                    promptIncluded: true
+                )
+            )
         }
     }
 
-    private func transcribeViaChatGPTBridge(audioData: Data, token: String) async throws -> String {
+    private func transcribeViaChatGPTBridge(
+        audioData: Data,
+        token: String,
+        prompt: String
+    ) async throws -> (text: String, promptIncluded: Bool) {
+        let capability = bridgePromptCapability.value()
+        if capability == false {
+            let text = try await executeTranscriptionRequest(
+                makeChatGPTBridgeRequest(
+                    audioData: audioData,
+                    token: token,
+                    prompt: nil
+                ),
+                providerLabel: "ChatGPT"
+            )
+            return (text, false)
+        }
+
+        do {
+            let text = try await executeTranscriptionRequest(
+                makeChatGPTBridgeRequest(
+                    audioData: audioData,
+                    token: token,
+                    prompt: prompt
+                ),
+                providerLabel: "ChatGPT"
+            )
+            bridgePromptCapability.mark(true)
+            return (text, true)
+        } catch {
+            let fallbackText = try await executeTranscriptionRequest(
+                makeChatGPTBridgeRequest(
+                    audioData: audioData,
+                    token: token,
+                    prompt: nil
+                ),
+                providerLabel: "ChatGPT"
+            )
+            bridgePromptCapability.mark(false)
+            return (fallbackText, false)
+        }
+    }
+
+    private func makeChatGPTBridgeRequest(
+        audioData: Data,
+        token: String,
+        prompt: String?
+    ) -> URLRequest {
         var request = URLRequest(url: URL(string: config.chatGPTURL)!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -57,13 +193,12 @@ struct ChatGPTTranscriber: Sendable {
         request.httpBody = makeMultipartBody(
             boundary: boundary,
             audioData: audioData,
-            extraFields: [:]
+            extraFields: prompt.map { ["prompt": $0] } ?? [:]
         )
-
-        return try await executeTranscriptionRequest(request, providerLabel: "ChatGPT")
+        return request
     }
 
-    private func transcribeViaOpenAICompatible(audioData: Data) async throws -> String {
+    private func transcribeViaOpenAICompatible(audioData: Data, prompt: String) async throws -> String {
         let token = ProcessInfo.processInfo.environment[config.openAIAuthTokenEnv] ?? ""
         guard !token.isEmpty else {
             throw TranscriptionError.missingAuthTokenEnv(config.openAIAuthTokenEnv)
@@ -79,6 +214,7 @@ struct ChatGPTTranscriber: Sendable {
             audioData: audioData,
             extraFields: [
                 "model": config.openAIModel,
+                "prompt": prompt,
             ]
         )
 
@@ -86,7 +222,7 @@ struct ChatGPTTranscriber: Sendable {
     }
 
     private func executeTranscriptionRequest(_ request: URLRequest, providerLabel: String) async throws -> String {
-        let (responseData, response) = try await URLSession.shared.data(for: request)
+        let (responseData, response) = try await dataLoader(request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw TranscriptionError.transcriptionFailed("\(providerLabel) missing HTTP response")
         }
@@ -108,7 +244,7 @@ struct ChatGPTTranscriber: Sendable {
     }
 
     private func makeBoundary() -> String {
-        "VoiceDex-\(UUID().uuidString)"
+        "ChatType-\(UUID().uuidString)"
     }
 
     private func makeMultipartBody(boundary: String, audioData: Data, extraFields: [String: String]) -> Data {
@@ -138,4 +274,10 @@ struct ChatGPTTranscriber: Sendable {
         }
         return object["message"] as? String
     }
+
+    private func elapsedMilliseconds(since start: UInt64) -> Int {
+        Int((DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
+    }
 }
+
+extension ChatGPTTranscriber: Transcriber {}

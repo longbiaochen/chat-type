@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="VoiceDex"
+APP_NAME="ChatType"
 APP_DIR="$ROOT/dist/$APP_NAME.app"
 APP_BINARY="$APP_DIR/Contents/MacOS/$APP_NAME"
-LAUNCH_AGENT_LABEL="com.longbiao.voicedex"
+LAUNCH_AGENT_LABEL="me.longbiaochen.chattype"
 LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$LAUNCH_AGENT_LABEL.plist"
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
