@@ -5,33 +5,92 @@ import OSLog
 
 @MainActor
 final class AppCoordinator {
-    private enum State {
+    enum State: Equatable {
         case idle
         case recording
         case processing
     }
 
-    private let configStore = ConfigStore()
-    private let notifier = Notifier()
-    private let injector = TextInjector()
-    private let overlay = OverlayController()
-    private let authClient = CodexAuthClient()
-    private let latencyRecorder = LatencyRecorder()
+    typealias RecorderFactory = @MainActor (Int) -> any RecordingControlling
+    typealias StatusMenuFactory = @MainActor (
+        @escaping () -> Void,
+        @escaping () -> Void,
+        @escaping () -> Void
+    ) -> any StatusMenuUpdating
+    typealias PipelineFactory = @Sendable (TranscriptionConfig, CodexAuthClient) -> any DictationPreparing
+
+    let configStore: ConfigStore
+    let notifier: any NotificationDispatching
+    let injector: any TextInjecting
+    let overlay: any OverlayControlling
+    let authClient: CodexAuthClient
+    let latencyRecorder: any LatencyRecording
+    let recorderFactory: RecorderFactory
+    let statusMenuFactory: StatusMenuFactory
+    let pipelineFactory: PipelineFactory
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "me.longbiaochen.chattype",
         category: "Permissions"
     )
 
-    private var config = AppConfig()
+    var config: AppConfig
     private var hotkeyMonitor: HotkeyMonitor?
-    private var recorder: AudioRecorder?
-    private var statusMenu: StatusMenuController?
+    var recorder: (any RecordingControlling)?
+    var statusMenu: (any StatusMenuUpdating)?
     private var preferencesWindowController: PreferencesWindowController?
     private var microphonePermissionWindowController: MicrophonePermissionWindowController?
-    private var state: State = .idle
+    var state: State = .idle
     private var recordingLevelTimer: Timer?
     private var overlayDemoFrameIndex = 0
-    private var launchAppContext: LaunchAppContext?
+    var launchAppContext: LaunchAppContext?
+    var processingTask: Task<Void, Never>?
+    private var startRecordingTask: Task<Void, Never>?
+    private var activeSessionID: UUID?
+    private var recordingStartedAt: DispatchTime?
+
+    init(
+        configStore: ConfigStore = ConfigStore(),
+        config: AppConfig = AppConfig(),
+        notifier: any NotificationDispatching = Notifier(),
+        injector: any TextInjecting = TextInjector(),
+        overlay: (any OverlayControlling)? = nil,
+        authClient: CodexAuthClient = CodexAuthClient(),
+        latencyRecorder: any LatencyRecording = LatencyRecorder(),
+        recorderFactory: @escaping RecorderFactory = { AudioRecorder(sampleRateHz: $0) },
+        statusMenuFactory: @escaping StatusMenuFactory = { openSettings, openConfig, quit in
+            StatusMenuController(
+                openSettingsHandler: openSettings,
+                openConfigHandler: openConfig,
+                quitHandler: quit
+            )
+        },
+        pipelineFactory: @escaping PipelineFactory = { transcriptionConfig, authClient in
+            DictationPipeline(
+                transcriber: ChatGPTTranscriber(
+                    authClient: authClient,
+                    config: transcriptionConfig
+                ),
+                normalizer: TerminologyNormalizer(),
+                importedEntries: transcriptionConfig.terminology.enabled ? transcriptionConfig.terminology.importedEntries : [],
+                hintTerms: transcriptionConfig.hintTerms
+            )
+        }
+    ) {
+        self.configStore = configStore
+        self.config = config
+        self.notifier = notifier
+        self.injector = injector
+        let resolvedOverlay = overlay ?? OverlayController()
+        self.overlay = resolvedOverlay
+        self.authClient = authClient
+        self.latencyRecorder = latencyRecorder
+        self.recorderFactory = recorderFactory
+        self.statusMenuFactory = statusMenuFactory
+        self.pipelineFactory = pipelineFactory
+        self.overlay.onCancel = { [weak self] in
+            self?.cancelCurrentSession()
+        }
+    }
 
     func start(launchMode: AppLaunchMode = .normal) {
         do {
@@ -44,16 +103,16 @@ final class AppCoordinator {
                 return
             }
 
-            statusMenu = StatusMenuController(
-                openSettingsHandler: { [weak self] in self?.openSettings() },
-                openConfigHandler: { [weak self] in self?.openConfigFolder() },
-                quitHandler: { NSApplication.shared.terminate(nil) }
+            statusMenu = statusMenuFactory(
+                { [weak self] in self?.openSettings() },
+                { [weak self] in self?.openConfigFolder() },
+                { NSApplication.shared.terminate(nil) }
             )
 
             switch launchMode {
             case .normal:
                 config = try configStore.load()
-                recorder = AudioRecorder(sampleRateHz: config.transcription.sampleRateHz)
+                recorder = recorderFactory(config.transcription.sampleRateHz)
                 refreshReadyState()
                 prewarmAuthIfNeeded()
 
@@ -64,7 +123,7 @@ final class AppCoordinator {
                 }
                 notifier.ensureAuthorization()
             case .overlayDemo:
-                config = (try? configStore.load()) ?? AppConfig()
+                config = (try? configStore.load()) ?? config
                 runOverlayDemo()
                 return
             case .benchmark:
@@ -90,7 +149,7 @@ final class AppCoordinator {
         }
     }
 
-    private func handleHotkeyPress() {
+    func handleHotkeyPress() {
         switch state {
         case .idle:
             startRecording()
@@ -101,58 +160,105 @@ final class AppCoordinator {
         }
     }
 
+    func cancelCurrentSession() {
+        guard state != .idle || activeSessionID != nil || processingTask != nil || startRecordingTask != nil else {
+            return
+        }
+
+        startRecordingTask?.cancel()
+        startRecordingTask = nil
+        processingTask?.cancel()
+        processingTask = nil
+        stopRecordingLevelUpdates()
+
+        if state == .recording {
+            try? recorder?.cancelRecording()
+        }
+
+        state = .idle
+        activeSessionID = nil
+        recordingStartedAt = nil
+        launchAppContext = nil
+        overlay.hide()
+        refreshReadyState()
+    }
+
     private func startRecording() {
         guard let recorder else { return }
 
         logger.info("Start recording requested from hotkey")
+        let sessionID = UUID()
+        activeSessionID = sessionID
         state = .processing
         statusMenu?.update(state: .processing, detail: "Requesting microphone")
-        overlay.showRecording()
+        overlay.showRecording(elapsedText: "00:00")
 
-        Task { @MainActor in
+        startRecordingTask?.cancel()
+        startRecordingTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
             do {
-                try await requestMicrophoneAccess()
+                try await self.requestMicrophoneAccess()
+                guard self.shouldContinue(sessionID: sessionID) else { return }
                 logger.info("Microphone access stage completed")
 
                 let issues = RuntimePreflight.issues(
-                    for: config,
+                    for: self.config,
                     environment: ProcessInfo.processInfo.environment
                 )
                 if let message = RuntimePreflight.summary(for: issues) {
                     logger.error("Runtime preflight blocked recording with \(issues.count, privacy: .public) issue(s): \(message, privacy: .public)")
-                    stopRecordingLevelUpdates()
-                    state = .idle
-                    statusMenu?.update(state: .setupRequired, detail: message)
-                    overlay.showError(message)
-                    notifier.notify(title: "ChatType setup required", body: message)
-                    openSettings()
+                    self.stopRecordingLevelUpdates()
+                    self.state = .idle
+                    self.activeSessionID = nil
+                    self.statusMenu?.update(state: .setupRequired, detail: message)
+                    self.overlay.showError(message)
+                    self.notifier.notify(title: "ChatType setup required", body: message)
+                    self.openSettings()
                     return
                 }
 
-                logger.info("Runtime preflight passed; starting AVAudioRecorder")
+                logger.info("Runtime preflight passed; starting recording session")
                 self.launchAppContext = LaunchAppContext.current()
                 try await recorder.startRecording()
-                logger.info("AVAudioRecorder started successfully")
-                state = .recording
-                statusMenu?.update(state: .recording, detail: "Recording on F5")
-                startRecordingLevelUpdates()
+                guard self.shouldContinue(sessionID: sessionID) else {
+                    try? recorder.cancelRecording()
+                    return
+                }
+
+                logger.info("Recording session started successfully")
+                self.recordingStartedAt = .now()
+                self.state = .recording
+                self.statusMenu?.update(state: .recording, detail: "Recording on F5")
+                self.startRecordingLevelUpdates()
+            } catch is CancellationError {
+                self.cancelCurrentSession()
             } catch {
+                guard self.shouldContinue(sessionID: sessionID) else { return }
                 logger.error("Start recording failed: \(error.localizedDescription, privacy: .public)")
-                stopRecordingLevelUpdates()
-                state = .idle
-                refreshReadyState(detailOverride: error.localizedDescription, state: .error)
-                overlay.showError(error.localizedDescription)
-                notifier.notify(title: "ChatType", body: error.localizedDescription)
+                self.stopRecordingLevelUpdates()
+                self.state = .idle
+                self.activeSessionID = nil
+                self.recordingStartedAt = nil
+                self.refreshReadyState(detailOverride: error.localizedDescription, state: .error)
+                self.overlay.showError(error.localizedDescription)
+                self.notifier.notify(title: "ChatType", body: error.localizedDescription)
+                self.launchAppContext = nil
+            }
+
+            if self.activeSessionID == sessionID {
+                self.startRecordingTask = nil
             }
         }
     }
 
     private func stopRecording() {
-        guard let recorder else { return }
+        guard let recorder, let sessionID = activeSessionID else { return }
 
         do {
             stopRecordingLevelUpdates()
             let audio = try recorder.stopRecording()
+            recordingStartedAt = nil
             state = .processing
             statusMenu?.update(state: .processing, detail: "Processing")
             overlay.showProcessing()
@@ -162,64 +268,79 @@ final class AppCoordinator {
             let processingStarted = DispatchTime.now().uptimeNanoseconds
             let launchAppContext = self.launchAppContext
 
-            Task {
-                let pipeline = DictationPipeline(
-                    transcriber: ChatGPTTranscriber(
-                        authClient: authClient,
-                        config: transcriptionConfig
-                    ),
-                    normalizer: TerminologyNormalizer(),
-                    importedEntries: transcriptionConfig.terminology.enabled ? transcriptionConfig.terminology.importedEntries : [],
-                    hintTerms: transcriptionConfig.hintTerms
-                )
+            processingTask?.cancel()
+            processingTask = Task { [weak self] in
+                guard let self else { return }
+                defer {
+                    try? FileManager.default.removeItem(at: audio.fileURL)
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        if self.activeSessionID == sessionID || self.activeSessionID == nil {
+                            self.processingTask = nil
+                        }
+                    }
+                }
+
+                let pipeline = self.pipelineFactory(transcriptionConfig, self.authClient)
 
                 do {
                     let prepared = try await pipeline.prepare(audio: audio)
+                    guard !Task.isCancelled else { return }
 
                     await MainActor.run {
+                        guard self.shouldContinue(sessionID: sessionID) else { return }
+
                         do {
                             let injectStarted = DispatchTime.now().uptimeNanoseconds
-                            let outcome = try injector.inject(
+                            let outcome = try self.injector.inject(
                                 text: prepared.finalText,
                                 preserveClipboard: injectionConfig.preserveClipboard,
                                 restoreDelayMilliseconds: injectionConfig.restoreDelayMilliseconds,
                                 launchAppContext: launchAppContext
                             )
-                            let injectMs = elapsedMilliseconds(since: injectStarted)
-                            let totalProcessingMs = elapsedMilliseconds(since: processingStarted)
-                            recordLatency(
+                            let injectMs = self.elapsedMilliseconds(since: injectStarted)
+                            let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
+                            self.recordLatency(
                                 prepared: prepared,
                                 outcome: outcome,
                                 injectMs: injectMs,
                                 totalProcessingMs: totalProcessingMs,
                                 errorCategory: nil
                             )
-                            state = .idle
-                            statusMenu?.update(
+                            self.state = .idle
+                            self.activeSessionID = nil
+                            self.statusMenu?.update(
                                 state: .ready,
-                                detail: statusDetail(for: outcome)
+                                detail: self.statusDetail(for: outcome)
                             )
-                            overlay.showResult(text: prepared.finalText, outcome: outcome)
+                            self.overlay.showResult(text: prepared.finalText, outcome: outcome)
+                            self.launchAppContext = nil
                         } catch {
-                            let totalProcessingMs = elapsedMilliseconds(since: processingStarted)
-                            recordLatency(
+                            let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
+                            self.recordLatency(
                                 prepared: prepared,
                                 outcome: nil,
                                 injectMs: 0,
                                 totalProcessingMs: totalProcessingMs,
                                 errorCategory: "inject"
                             )
-                            stopRecordingLevelUpdates()
-                            state = .idle
-                            statusMenu?.update(state: .error, detail: error.localizedDescription)
-                            overlay.showError(error.localizedDescription)
-                            notifier.notify(title: "ChatType", body: error.localizedDescription)
+                            self.state = .idle
+                            self.activeSessionID = nil
+                            self.statusMenu?.update(state: .error, detail: error.localizedDescription)
+                            self.overlay.showError(error.localizedDescription)
+                            self.notifier.notify(title: "ChatType", body: error.localizedDescription)
+                            self.launchAppContext = nil
                         }
-                        self.launchAppContext = nil
                     }
+                } catch is CancellationError {
+                    return
                 } catch {
+                    guard !Task.isCancelled else { return }
+
                     await MainActor.run {
-                        let totalProcessingMs = elapsedMilliseconds(since: processingStarted)
+                        guard self.shouldContinue(sessionID: sessionID) else { return }
+
+                        let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
                         let sample = LatencySample(
                             timestamp: Date(),
                             audioDurationMs: audio.durationMs,
@@ -233,21 +354,21 @@ final class AppCoordinator {
                             resultStatus: "error",
                             errorCategory: "transcribe"
                         )
-                        try? latencyRecorder.record(sample)
-                        stopRecordingLevelUpdates()
-                        state = .idle
-                        statusMenu?.update(state: .error, detail: error.localizedDescription)
-                        overlay.showError(error.localizedDescription)
-                        notifier.notify(title: "ChatType", body: error.localizedDescription)
+                        try? self.latencyRecorder.record(sample)
+                        self.state = .idle
+                        self.activeSessionID = nil
+                        self.statusMenu?.update(state: .error, detail: error.localizedDescription)
+                        self.overlay.showError(error.localizedDescription)
+                        self.notifier.notify(title: "ChatType", body: error.localizedDescription)
                         self.launchAppContext = nil
                     }
                 }
-
-                try? FileManager.default.removeItem(at: audio.fileURL)
             }
         } catch {
             stopRecordingLevelUpdates()
             state = .idle
+            activeSessionID = nil
+            recordingStartedAt = nil
             statusMenu?.update(state: .error, detail: error.localizedDescription)
             overlay.showError(error.localizedDescription)
             notifier.notify(title: "ChatType", body: error.localizedDescription)
@@ -370,7 +491,7 @@ final class AppCoordinator {
 
         state = .processing
         statusMenu?.update(state: .demo, detail: "Overlay demo")
-        overlay.showRecording()
+        overlay.showRecording(elapsedText: "00:00")
         overlayDemoFrameIndex = 0
 
         recordingLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
@@ -378,7 +499,7 @@ final class AppCoordinator {
                 guard let self else { return }
                 let level = demoLevels[self.overlayDemoFrameIndex % demoLevels.count]
                 self.overlayDemoFrameIndex += 1
-                self.overlay.updateRecordingLevel(level)
+                self.overlay.updateRecording(level: level, elapsedText: self.demoElapsedText())
             }
         }
 
@@ -402,14 +523,14 @@ final class AppCoordinator {
 
     private func startRecordingLevelUpdates() {
         stopRecordingLevelUpdates()
-        overlay.showRecording()
+        overlay.showRecording(elapsedText: elapsedRecordingText())
 
         recordingLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, let level = self.recorder?.currentLevel() else {
                     return
                 }
-                self.overlay.updateRecordingLevel(level)
+                self.overlay.updateRecording(level: level, elapsedText: self.elapsedRecordingText())
             }
         }
     }
@@ -417,6 +538,23 @@ final class AppCoordinator {
     private func stopRecordingLevelUpdates() {
         recordingLevelTimer?.invalidate()
         recordingLevelTimer = nil
+    }
+
+    private func elapsedRecordingText() -> String {
+        guard let recordingStartedAt else {
+            return "00:00"
+        }
+        let elapsedSeconds = Int((DispatchTime.now().uptimeNanoseconds - recordingStartedAt.uptimeNanoseconds) / 1_000_000_000)
+        return Self.formatElapsed(seconds: elapsedSeconds)
+    }
+
+    private func demoElapsedText() -> String {
+        Self.formatElapsed(seconds: overlayDemoFrameIndex / 12)
+    }
+
+    private static func formatElapsed(seconds: Int) -> String {
+        let boundedSeconds = max(0, seconds)
+        return String(format: "%02d:%02d", boundedSeconds / 60, boundedSeconds % 60)
     }
 
     private func statusDetail(for outcome: InjectionOutcome) -> String {
@@ -476,6 +614,10 @@ final class AppCoordinator {
 
     private func elapsedMilliseconds(since start: UInt64) -> Int {
         Int((DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
+    }
+
+    private func shouldContinue(sessionID: UUID) -> Bool {
+        activeSessionID == sessionID
     }
 
     private func refreshReadyState(detailOverride: String? = nil, state: StatusMenuVisualState = .ready) {

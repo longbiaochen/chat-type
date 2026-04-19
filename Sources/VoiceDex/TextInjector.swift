@@ -90,7 +90,17 @@ enum InjectionOutcome: Sendable, Equatable {
 }
 
 @MainActor
-final class TextInjector {
+protocol TextInjecting: AnyObject {
+    func inject(
+        text: String,
+        preserveClipboard: Bool,
+        restoreDelayMilliseconds: UInt64,
+        launchAppContext: LaunchAppContext?
+    ) throws -> InjectionOutcome
+}
+
+@MainActor
+final class TextInjector: TextInjecting {
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "me.longbiaochen.chattype",
         category: "TextInjector"

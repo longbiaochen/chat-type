@@ -5,7 +5,8 @@ This spec mirrors the HUD implementation currently shipped in `dist/ChatType.app
 ## Core Shell
 
 - Container: graphite pill
-- Default size: `220 x 56`
+- Processing / success size: `220 x 56`
+- Recording size: `256 x 56`
 - Error size: `320 x 56`
 - Corner radius: `18`
 - Border: `1px`, mist at `8%` opacity
@@ -16,6 +17,8 @@ This spec mirrors the HUD implementation currently shipped in `dist/ChatType.app
   - leading inset: `14`
   - text gap: `10`
   - trailing inset: `16`
+  - trailing timer reserve: `42`
+  - close control: `12 x 12`, inset from top-left by `10`
 
 ## Color Tokens
 
@@ -41,10 +44,17 @@ This spec mirrors the HUD implementation currently shipped in `dist/ChatType.app
 ## Recording
 
 - Title: `Listening`
+- Cancel affordances:
+  - `ESC` cancels the current session
+  - a red macOS-style close control sits at the top-left of the pill
 - Leading visual: 9 thin waveform bars
 - Bar count: `9`
 - Bar spacing: `4`
 - Minimum bar height: `6`
+- Trailing timer:
+  - visible only while recording
+  - format `mm:ss`
+  - uses compact monospaced digits on the right edge
 - Shape rule:
   - center bar should be the tallest
   - bars fall off symmetrically toward the edges
@@ -60,6 +70,10 @@ Reference profile:
 ## Processing
 
 - Title: `Processing`
+- Cancel affordances remain active:
+  - `ESC` cancels the current transcription
+  - the close control still dismisses the in-flight session
+- Timer is hidden in this state
 - Leading visual: same 9-bar skeleton as recording
 - Animation rule:
   - do not pulse the entire group uniformly
@@ -75,6 +89,7 @@ Reference frames:
 ## Success
 
 - Title: `Pasted`
+- No cancel affordance in this state
 - Leading visual: rounded badge inside the same pill system
 - Badge size: `64 x 36`
 - Badge radius: `18`
@@ -85,6 +100,7 @@ Reference frames:
 ## Clipboard Fallback
 
 - Title: `Copied`
+- No cancel affordance in this state
 - Leading visual: same badge container as success
 - Fill: Amber at low opacity
 - Border: Amber at medium opacity
@@ -93,6 +109,7 @@ Reference frames:
 ## Error
 
 - Title: `Error`
+- No cancel affordance in this state
 - Detail text is visible
 - Leading visual: same badge container as success/copy
 - Fill: Error at low opacity

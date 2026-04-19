@@ -3,6 +3,7 @@ import Foundation
 
 struct OverlayStylePreset: Sendable, Equatable {
     let pillWidth: CGFloat
+    let recordingPillWidth: CGFloat
     let pillHeight: CGFloat
     let errorPillWidth: CGFloat
     let cornerRadius: CGFloat
@@ -16,9 +17,14 @@ struct OverlayStylePreset: Sendable, Equatable {
     let processingAutoHideDelay: TimeInterval?
     let successAutoHideDelay: TimeInterval?
     let errorAutoHideDelay: TimeInterval?
+    let closeControlDiameter: CGFloat
+    let closeControlInsetX: CGFloat
+    let closeControlInsetY: CGFloat
+    let trailingTimerWidth: CGFloat
 
     static let typeWhisperMinimal = OverlayStylePreset(
         pillWidth: 220,
+        recordingPillWidth: 256,
         pillHeight: 56,
         errorPillWidth: 320,
         cornerRadius: 18,
@@ -31,8 +37,23 @@ struct OverlayStylePreset: Sendable, Equatable {
         recordingAutoHideDelay: nil,
         processingAutoHideDelay: nil,
         successAutoHideDelay: 1.2,
-        errorAutoHideDelay: 2.0
+        errorAutoHideDelay: 2.0,
+        closeControlDiameter: 12,
+        closeControlInsetX: 10,
+        closeControlInsetY: 10,
+        trailingTimerWidth: 42
     )
+
+    func width(for state: OverlayVisualState) -> CGFloat {
+        switch state {
+        case .recording:
+            return recordingPillWidth
+        case .error:
+            return errorPillWidth
+        default:
+            return pillWidth
+        }
+    }
 }
 
 enum OverlayLeadingVisual: Sendable, Equatable {
@@ -56,7 +77,7 @@ enum OverlaySuccessKind: Sendable, Equatable {
 }
 
 enum OverlayVisualState: Sendable, Equatable {
-    case recording(levels: [CGFloat])
+    case recording(levels: [CGFloat], elapsedText: String)
     case processing
     case success(OverlaySuccessKind)
     case error(String)
@@ -92,6 +113,24 @@ enum OverlayVisualState: Sendable, Equatable {
             return true
         }
         return false
+    }
+
+    var showsCancelControl: Bool {
+        switch self {
+        case .recording, .processing:
+            return true
+        case .success, .error:
+            return false
+        }
+    }
+
+    var trailingText: String? {
+        switch self {
+        case .recording(_, let elapsedText):
+            return elapsedText
+        case .processing, .success, .error:
+            return nil
+        }
     }
 
     var supplementaryText: String? {

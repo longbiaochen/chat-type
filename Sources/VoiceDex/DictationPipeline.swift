@@ -1,10 +1,14 @@
 import Foundation
 
-protocol Transcriber {
+protocol Transcriber: Sendable {
     func transcribe(_ audio: RecordedAudio) async throws -> TranscriptionResult
 }
 
-protocol TranscriptNormalizing {
+protocol DictationPreparing: Sendable {
+    func prepare(audio: RecordedAudio) async throws -> PreparedDictation
+}
+
+protocol TranscriptNormalizing: Sendable {
     func normalize(
         text: String,
         importedEntries: [TerminologyEntry],
@@ -26,7 +30,7 @@ struct PreparedDictation: Sendable, Equatable {
     let metrics: DictationMetrics
 }
 
-struct DictationPipeline {
+struct DictationPipeline: DictationPreparing {
     let transcriber: any Transcriber
     let normalizer: any TranscriptNormalizing
     let importedEntries: [TerminologyEntry]

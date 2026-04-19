@@ -15,7 +15,7 @@ func minimalOverlayPresetUsesNineBarVoiceGlyph() {
 
 @Test
 func overlayStatesStillDifferentiateLeadingVisualFamilies() {
-    #expect(OverlayVisualState.recording(levels: Array(repeating: 0.2, count: 9)).leadingVisual == .waveform)
+    #expect(OverlayVisualState.recording(levels: Array(repeating: 0.2, count: 9), elapsedText: "00:03").leadingVisual == .waveform)
     #expect(OverlayVisualState.processing.leadingVisual == .spinner)
     #expect(OverlayVisualState.success(.pasted).leadingVisual == .icon(symbolName: "checkmark.circle.fill"))
     #expect(OverlayVisualState.error("Microphone permission is missing").leadingVisual == .icon(symbolName: "exclamationmark.triangle.fill"))
@@ -23,10 +23,33 @@ func overlayStatesStillDifferentiateLeadingVisualFamilies() {
 
 @Test
 func overlayStatesStayCompactExceptErrors() {
-    #expect(OverlayVisualState.recording(levels: Array(repeating: 0.2, count: 9)).allowsSupplementaryText == false)
+    #expect(OverlayVisualState.recording(levels: Array(repeating: 0.2, count: 9), elapsedText: "00:03").allowsSupplementaryText == false)
     #expect(OverlayVisualState.processing.allowsSupplementaryText == false)
     #expect(OverlayVisualState.success(.pasted).allowsSupplementaryText == false)
     #expect(OverlayVisualState.error("Microphone permission is missing").allowsSupplementaryText == true)
+}
+
+@Test
+func recordingOverlayStateShowsCancelControlAndTimer() {
+    let state = OverlayVisualState.recording(
+        levels: Array(repeating: 0.2, count: 9),
+        elapsedText: "00:07"
+    )
+
+    #expect(state.showsCancelControl == true)
+    #expect(state.trailingText == "00:07")
+}
+
+@Test
+func processingOverlayStateShowsCancelControlWithoutTimer() {
+    #expect(OverlayVisualState.processing.showsCancelControl == true)
+    #expect(OverlayVisualState.processing.trailingText == nil)
+}
+
+@Test
+func successAndErrorStatesRemainNonInteractive() {
+    #expect(OverlayVisualState.success(.pasted).showsCancelControl == false)
+    #expect(OverlayVisualState.error("boom").showsCancelControl == false)
 }
 
 @Test
@@ -80,4 +103,15 @@ func waveformNormalizerPadsMissingSamplesToTheRequestedWaveCount() {
 
     #expect(smoothed.count == 9)
     #expect(smoothed.allSatisfy { $0 >= 0.08 && $0 <= 1 })
+}
+
+@Test
+func overlayRecordingWidthExpandsToFitTimer() {
+    let preset = OverlayStylePreset.typeWhisperMinimal
+
+    #expect(
+        preset.width(for: .recording(levels: Array(repeating: 0.2, count: 9), elapsedText: "00:07")) >
+            preset.width(for: .processing)
+    )
+    #expect(preset.width(for: .error("boom")) == preset.errorPillWidth)
 }

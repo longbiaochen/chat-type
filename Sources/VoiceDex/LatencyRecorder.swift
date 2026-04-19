@@ -14,7 +14,11 @@ struct LatencySample: Codable, Sendable, Equatable {
     let errorCategory: String?
 }
 
-final class LatencyRecorder: @unchecked Sendable {
+protocol LatencyRecording: Sendable {
+    func record(_ sample: LatencySample) throws
+}
+
+final class LatencyRecorder: LatencyRecording, @unchecked Sendable {
     private let fileManager: FileManager
     let directoryURL: URL
     private let lock = NSLock()

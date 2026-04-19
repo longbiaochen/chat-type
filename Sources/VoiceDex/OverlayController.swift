@@ -3,23 +3,40 @@ import CoreGraphics
 import Foundation
 
 @MainActor
-final class OverlayController {
+protocol OverlayControlling: AnyObject {
+    var onCancel: (@MainActor () -> Void)? { get set }
+
+    func showRecording(elapsedText: String)
+    func updateRecording(level: CGFloat, elapsedText: String)
+    func showProcessing()
+    func showResult(text: String, outcome: InjectionOutcome)
+    func showError(_ message: String)
+    func hide()
+}
+
+@MainActor
+final class OverlayController: OverlayControlling {
     private let style = OverlayStylePreset.typeWhisperMinimal
     private let panel: NSPanel
+    private let closeControlPanel: NSPanel
     private let backgroundView = NSView()
     private let leadingContainer = NSView()
     private let leadingBadgeView = NSView()
     private let waveformView: OverlayWaveformView
     private let iconView = NSImageView()
+    private let closeButton = NSButton()
     private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
+    private let trailingTimerLabel = NSTextField(labelWithString: "")
     private var hideTask: Task<Void, Never>?
     private var processingTimer: Timer?
     private var processingFrameIndex = 0
     private var displayedLevels: [CGFloat]
     private var currentState: OverlayVisualState
+    private var escapeHotkeyMonitor: HotkeyMonitor?
+    var onCancel: (@MainActor () -> Void)?
 
-    init() {
+    init(onCancel: (@MainActor () -> Void)? = nil) {
         displayedLevels = Array(
             repeating: WaveformNormalizer.minimumVisibleLevel,
             count: style.waveformBarCount
@@ -43,28 +60,49 @@ final class OverlayController {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         panel.ignoresMouseEvents = true
+        closeControlPanel = NSPanel(
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: style.closeControlDiameter + 8,
+                height: style.closeControlDiameter + 8
+            ),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        closeControlPanel.isFloatingPanel = true
+        closeControlPanel.level = .statusBar
+        closeControlPanel.backgroundColor = .clear
+        closeControlPanel.hasShadow = false
+        closeControlPanel.isOpaque = false
+        closeControlPanel.hidesOnDeactivate = false
+        closeControlPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        closeControlPanel.ignoresMouseEvents = false
+        self.onCancel = onCancel
 
         configureViews()
+        configureCloseControl()
     }
 
-    func showRecording() {
+    func showRecording(elapsedText: String) {
         stopProcessingAnimation()
         displayedLevels = Array(
             repeating: WaveformNormalizer.minimumVisibleLevel,
             count: style.waveformBarCount
         )
-        apply(state: .recording(levels: displayedLevels))
+        apply(state: .recording(levels: displayedLevels, elapsedText: elapsedText))
         present()
     }
 
-    func updateRecordingLevel(_ level: CGFloat) {
+    func updateRecording(level: CGFloat, elapsedText: String) {
         stopProcessingAnimation()
         displayedLevels = WaveformNormalizer.smoothedLevels(
             previous: displayedLevels,
             targetLevel: level,
             barCount: style.waveformBarCount
         )
-        apply(state: .recording(levels: displayedLevels))
+        apply(state: .recording(levels: displayedLevels, elapsedText: elapsedText))
         present()
     }
 
@@ -103,6 +141,14 @@ final class OverlayController {
         scheduleHide(afterSeconds: style.errorAutoHideDelay ?? 2.0)
     }
 
+    func hide() {
+        hideTask?.cancel()
+        stopProcessingAnimation()
+        hideSessionControls()
+        panel.alphaValue = 0
+        panel.orderOut(nil)
+    }
+
     private func apply(state: OverlayVisualState) {
         hideTask?.cancel()
         currentState = state
@@ -111,9 +157,12 @@ final class OverlayController {
         titleLabel.stringValue = state.label
         detailLabel.stringValue = state.supplementaryText ?? ""
         detailLabel.isHidden = !state.allowsSupplementaryText
+        trailingTimerLabel.stringValue = state.trailingText ?? ""
+        trailingTimerLabel.isHidden = state.trailingText == nil
+        updateSessionControls(for: state)
 
         switch state {
-        case .recording(let levels):
+        case .recording(let levels, _):
             displayedLevels = levels
             waveformView.isHidden = false
             waveformView.update(levels: levels)
@@ -197,6 +246,10 @@ final class OverlayController {
         } else {
             panel.orderFrontRegardless()
         }
+
+        if currentState.showsCancelControl {
+            closeControlPanel.orderFrontRegardless()
+        }
     }
 
     private func scheduleHide(afterSeconds: Double) {
@@ -209,8 +262,7 @@ final class OverlayController {
                 panel.animator().alphaValue = 0
             }, completionHandler: {
                 Task { @MainActor in
-                    self.stopProcessingAnimation()
-                    self.panel.orderOut(nil)
+                    self.hide()
                 }
             })
         }
@@ -262,6 +314,12 @@ final class OverlayController {
         detailLabel.lineBreakMode = .byTruncatingTail
         detailLabel.isHidden = true
 
+        trailingTimerLabel.translatesAutoresizingMaskIntoConstraints = false
+        trailingTimerLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        trailingTimerLabel.textColor = ChatTypePalette.mistMuted
+        trailingTimerLabel.alignment = .right
+        trailingTimerLabel.isHidden = true
+
         let textStack = NSStackView(views: [titleLabel, detailLabel])
         textStack.translatesAutoresizingMaskIntoConstraints = false
         textStack.orientation = .vertical
@@ -270,6 +328,7 @@ final class OverlayController {
 
         backgroundView.addSubview(leadingContainer)
         backgroundView.addSubview(textStack)
+        backgroundView.addSubview(trailingTimerLabel)
         leadingContainer.addSubview(waveformView)
         leadingContainer.addSubview(leadingBadgeView)
         leadingContainer.addSubview(iconView)
@@ -301,18 +360,17 @@ final class OverlayController {
             iconView.heightAnchor.constraint(equalToConstant: 18),
 
             textStack.leadingAnchor.constraint(equalTo: leadingContainer.trailingAnchor, constant: 10),
-            textStack.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor, constant: -16),
+            textStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingTimerLabel.leadingAnchor, constant: -10),
             textStack.centerYAnchor.constraint(equalTo: backgroundView.centerYAnchor),
+
+            trailingTimerLabel.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor, constant: -16),
+            trailingTimerLabel.centerYAnchor.constraint(equalTo: backgroundView.centerYAnchor),
+            trailingTimerLabel.widthAnchor.constraint(equalToConstant: style.trailingTimerWidth),
         ])
     }
 
     private func panelSize(for state: OverlayVisualState) -> NSSize {
-        switch state {
-        case .error:
-            return NSSize(width: style.errorPillWidth, height: style.pillHeight)
-        default:
-            return NSSize(width: style.pillWidth, height: style.pillHeight)
-        }
+        NSSize(width: style.width(for: state), height: style.pillHeight)
     }
 
     private func positionPanel(size: NSSize) {
@@ -323,11 +381,85 @@ final class OverlayController {
             y: visibleFrame.minY + 116
         )
         panel.setFrame(NSRect(origin: origin, size: size), display: false)
+        positionCloseControlPanel()
     }
 
     private func activeScreen() -> NSScreen? {
         let mouseLocation = NSEvent.mouseLocation
         return NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) })
+    }
+
+    private func configureCloseControl() {
+        let container = NSView(frame: closeControlPanel.contentRect(forFrameRect: closeControlPanel.frame))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+        closeControlPanel.contentView = container
+
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.isBordered = false
+        closeButton.bezelStyle = .regularSquare
+        closeButton.wantsLayer = true
+        closeButton.layer?.cornerRadius = style.closeControlDiameter / 2
+        closeButton.layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.94).cgColor
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Cancel dictation")
+        closeButton.symbolConfiguration = .init(pointSize: 7, weight: .bold)
+        closeButton.imagePosition = .imageOnly
+        closeButton.contentTintColor = NSColor.black.withAlphaComponent(0.72)
+        closeButton.target = self
+        closeButton.action = #selector(handleCancelControlPressed)
+
+        container.addSubview(closeButton)
+        NSLayoutConstraint.activate([
+            closeButton.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            closeButton.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            closeButton.widthAnchor.constraint(equalToConstant: style.closeControlDiameter),
+            closeButton.heightAnchor.constraint(equalToConstant: style.closeControlDiameter),
+        ])
+    }
+
+    private func updateSessionControls(for state: OverlayVisualState) {
+        if state.showsCancelControl {
+            positionCloseControlPanel()
+            activateEscapeHotkeyIfNeeded()
+        } else {
+            hideSessionControls()
+        }
+    }
+
+    private func positionCloseControlPanel() {
+        guard currentState.showsCancelControl else { return }
+
+        let buttonSize = NSSize(
+            width: style.closeControlDiameter + 8,
+            height: style.closeControlDiameter + 8
+        )
+        let origin = NSPoint(
+            x: panel.frame.minX + style.closeControlInsetX - 4,
+            y: panel.frame.maxY - style.closeControlInsetY - buttonSize.height + 4
+        )
+        closeControlPanel.setFrame(
+            NSRect(origin: origin, size: buttonSize),
+            display: false
+        )
+    }
+
+    private func activateEscapeHotkeyIfNeeded() {
+        guard escapeHotkeyMonitor == nil else { return }
+        escapeHotkeyMonitor = try? HotkeyMonitor(keyCode: 53) { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.onCancel?()
+            }
+        }
+    }
+
+    private func hideSessionControls() {
+        escapeHotkeyMonitor = nil
+        closeControlPanel.orderOut(nil)
+    }
+
+    @objc
+    private func handleCancelControlPressed() {
+        onCancel?()
     }
 }
 

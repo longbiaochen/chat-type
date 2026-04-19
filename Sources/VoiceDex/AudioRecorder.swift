@@ -9,6 +9,23 @@ struct RecordedAudio: Sendable {
     let durationMs: Int
 }
 
+protocol RecordingSessionControlling: AnyObject, Sendable {
+    func prepareToRecord() -> Bool
+    func record() -> Bool
+    func stop()
+    func updateMeters()
+    func averagePower(forChannel channelNumber: Int) -> Float
+    var currentTime: TimeInterval { get }
+}
+
+@MainActor
+protocol RecordingControlling: AnyObject {
+    func startRecording() async throws
+    func stopRecording() throws -> RecordedAudio
+    func cancelRecording() throws
+    func currentLevel() -> CGFloat?
+}
+
 enum MicrophonePermissionState: Sendable {
     case granted
     case undetermined
@@ -36,9 +53,11 @@ enum RecorderError: LocalizedError {
 }
 
 @MainActor
-final class AudioRecorder {
+final class AudioRecorder: RecordingControlling {
     typealias PermissionProvider = @Sendable () -> MicrophonePermissionState
     typealias PermissionRequester = @Sendable () async -> Bool
+    typealias SessionFactory = @Sendable (URL, [String: Any]) throws -> any RecordingSessionControlling
+    typealias TemporaryFileURLFactory = @Sendable () -> URL
 
     nonisolated private static let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "me.longbiaochen.chattype",
@@ -46,11 +65,43 @@ final class AudioRecorder {
     )
 
     private let sampleRateHz: Int
-    private var recorder: AVAudioRecorder?
+    private let permissionProvider: PermissionProvider
+    private let permissionRequester: PermissionRequester
+    private let sessionFactory: SessionFactory
+    private let temporaryFileURLFactory: TemporaryFileURLFactory
+    private let fileManager: FileManager
+    private var recorder: (any RecordingSessionControlling)?
     private var fileURL: URL?
 
-    init(sampleRateHz: Int) {
+    init(
+        sampleRateHz: Int,
+        permissionProvider: @escaping PermissionProvider = { microphonePermissionState() },
+        permissionRequester: @escaping PermissionRequester = {
+            if #available(macOS 14.0, *) {
+                return await withCheckedContinuation { continuation in
+                    AVAudioApplication.requestRecordPermission { granted in
+                        continuation.resume(returning: granted)
+                    }
+                }
+            }
+
+            return await AVCaptureDevice.requestAccess(for: .audio)
+        },
+        sessionFactory: @escaping SessionFactory = { url, settings in
+            try AVAudioRecorderSession(url: url, settings: settings)
+        },
+        temporaryFileURLFactory: @escaping TemporaryFileURLFactory = {
+            FileManager.default.temporaryDirectory
+                .appendingPathComponent("chattype-\(UUID().uuidString).wav")
+        },
+        fileManager: FileManager = .default
+    ) {
         self.sampleRateHz = sampleRateHz
+        self.permissionProvider = permissionProvider
+        self.permissionRequester = permissionRequester
+        self.sessionFactory = sessionFactory
+        self.temporaryFileURLFactory = temporaryFileURLFactory
+        self.fileManager = fileManager
     }
 
     nonisolated static func microphonePermissionState() -> MicrophonePermissionState {
@@ -117,10 +168,12 @@ final class AudioRecorder {
     }
 
     func startRecording() async throws {
-        try await Self.ensureMicrophoneAccess()
+        try await Self.ensureMicrophoneAccess(
+            permissionProvider: permissionProvider,
+            requestPermission: permissionRequester
+        )
 
-        let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chattype-\(UUID().uuidString).wav")
+        let tempURL = temporaryFileURLFactory()
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatLinearPCM),
             AVSampleRateKey: sampleRateHz,
@@ -130,8 +183,7 @@ final class AudioRecorder {
             AVLinearPCMIsFloatKey: false,
         ]
 
-        let recorder = try AVAudioRecorder(url: tempURL, settings: settings)
-        recorder.isMeteringEnabled = true
+        let recorder = try sessionFactory(tempURL, settings)
         guard recorder.prepareToRecord(), recorder.record() else {
             throw RecorderError.recorderStartFailed
         }
@@ -155,6 +207,17 @@ final class AudioRecorder {
         )
     }
 
+    func cancelRecording() throws {
+        guard let recorder, let fileURL else {
+            throw RecorderError.noActiveRecording
+        }
+
+        recorder.stop()
+        self.recorder = nil
+        self.fileURL = nil
+        try? fileManager.removeItem(at: fileURL)
+    }
+
     func currentLevel() -> CGFloat? {
         guard let recorder else {
             return nil
@@ -164,5 +227,39 @@ final class AudioRecorder {
         return WaveformNormalizer.normalizedLevel(
             fromAveragePower: recorder.averagePower(forChannel: 0)
         )
+    }
+}
+
+private final class AVAudioRecorderSession: RecordingSessionControlling, @unchecked Sendable {
+    private let recorder: AVAudioRecorder
+
+    init(url: URL, settings: [String: Any]) throws {
+        let recorder = try AVAudioRecorder(url: url, settings: settings)
+        recorder.isMeteringEnabled = true
+        self.recorder = recorder
+    }
+
+    func prepareToRecord() -> Bool {
+        recorder.prepareToRecord()
+    }
+
+    func record() -> Bool {
+        recorder.record()
+    }
+
+    func stop() {
+        recorder.stop()
+    }
+
+    func updateMeters() {
+        recorder.updateMeters()
+    }
+
+    func averagePower(forChannel channelNumber: Int) -> Float {
+        recorder.averagePower(forChannel: channelNumber)
+    }
+
+    var currentTime: TimeInterval {
+        recorder.currentTime
     }
 }

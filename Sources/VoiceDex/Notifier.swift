@@ -2,7 +2,13 @@ import Foundation
 import UserNotifications
 
 @MainActor
-final class Notifier {
+protocol NotificationDispatching: AnyObject {
+    func ensureAuthorization()
+    func notify(title: String, body: String)
+}
+
+@MainActor
+final class Notifier: NotificationDispatching {
     private var didRequestAuthorization = false
 
     func ensureAuthorization() {

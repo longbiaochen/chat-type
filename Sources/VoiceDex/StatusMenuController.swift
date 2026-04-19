@@ -1,7 +1,12 @@
 import AppKit
 
 @MainActor
-final class StatusMenuController: NSObject {
+protocol StatusMenuUpdating: AnyObject {
+    func update(state: StatusMenuVisualState, detail: String)
+}
+
+@MainActor
+final class StatusMenuController: NSObject, StatusMenuUpdating {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let stateItem = NSMenuItem(title: "State: idle", action: nil, keyEquivalent: "")
     private let detailItem = NSMenuItem(title: "Ready", action: nil, keyEquivalent: "")
