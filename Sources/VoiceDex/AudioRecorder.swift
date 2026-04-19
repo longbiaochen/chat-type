@@ -1,10 +1,18 @@
 import AVFoundation
+import AVFAudio
 import CoreGraphics
 import Foundation
+import OSLog
 
 struct RecordedAudio: Sendable {
     let fileURL: URL
     let durationMs: Int
+}
+
+enum MicrophonePermissionState: Sendable {
+    case granted
+    case undetermined
+    case denied
 }
 
 enum RecorderError: LocalizedError {
@@ -29,6 +37,14 @@ enum RecorderError: LocalizedError {
 
 @MainActor
 final class AudioRecorder {
+    typealias PermissionProvider = @Sendable () -> MicrophonePermissionState
+    typealias PermissionRequester = @Sendable () async -> Bool
+
+    nonisolated private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "me.longbiaochen.chattype",
+        category: "Permissions"
+    )
+
     private let sampleRateHz: Int
     private var recorder: AVAudioRecorder?
     private var fileURL: URL?
@@ -37,11 +53,71 @@ final class AudioRecorder {
         self.sampleRateHz = sampleRateHz
     }
 
-    func startRecording() async throws {
-        let granted = await AVCaptureDevice.requestAccess(for: .audio)
-        guard granted else {
+    nonisolated static func microphonePermissionState() -> MicrophonePermissionState {
+        if #available(macOS 14.0, *) {
+            switch AVAudioApplication.shared.recordPermission {
+            case .granted:
+                return .granted
+            case .undetermined:
+                return .undetermined
+            case .denied:
+                return .denied
+            @unknown default:
+                return .denied
+            }
+        }
+
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return .granted
+        case .notDetermined:
+            return .undetermined
+        case .denied, .restricted:
+            return .denied
+        @unknown default:
+            return .denied
+        }
+    }
+
+    nonisolated static func ensureMicrophoneAccess(
+        permissionProvider: PermissionProvider = { microphonePermissionState() },
+        requestPermission: @escaping PermissionRequester = {
+            if #available(macOS 14.0, *) {
+                return await withCheckedContinuation { continuation in
+                    AVAudioApplication.requestRecordPermission { granted in
+                        continuation.resume(returning: granted)
+                    }
+                }
+            }
+
+            return await AVCaptureDevice.requestAccess(for: .audio)
+        }
+    ) async throws {
+        let status = permissionProvider()
+        logger.info("Microphone access check started with status: \(String(describing: status), privacy: .public)")
+
+        switch status {
+        case .granted:
+            logger.info("Microphone access already authorized")
+            return
+        case .undetermined:
+            logger.info("Microphone access not determined; requesting system prompt")
+            let granted = await requestPermission()
+            logger.info("Microphone access request returned granted=\(granted, privacy: .public)")
+            guard granted else {
+                throw RecorderError.microphoneDenied
+            }
+        case .denied:
+            logger.error("Microphone access unavailable with status: \(String(describing: status), privacy: .public)")
+            throw RecorderError.microphoneDenied
+        @unknown default:
+            logger.error("Microphone access hit unknown authorization status")
             throw RecorderError.microphoneDenied
         }
+    }
+
+    func startRecording() async throws {
+        try await Self.ensureMicrophoneAccess()
 
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("chattype-\(UUID().uuidString).wav")

@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChatType</title>
+  <meta name="description" content="按住 F5 说话，松开就把中文直接回填到当前输入框。ChatType 是面向已登录 ChatGPT Desktop 用户的原生 macOS 听写工具。">
+  <style>
+    :root {
+      --bg: #0f1722;
+      --bg-soft: #171f2d;
+      --card: rgba(255, 255, 255, 0.05);
+      --text: #eef4fb;
+      --muted: #bfc9d8;
+      --line: rgba(255, 255, 255, 0.12);
+      --accent: #7ac7ff;
+      --accent-2: #59d69e;
+      --warning: #ffbf52;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(122, 199, 255, 0.18), transparent 28%),
+        radial-gradient(circle at top right, rgba(89, 214, 158, 0.12), transparent 24%),
+        linear-gradient(180deg, #0d141d 0%, var(--bg) 50%, #0b1118 100%);
+      min-height: 100vh;
+    }
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 56px 24px 72px;
+    }
+    .hero {
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+      box-shadow: 0 18px 60px rgba(0,0,0,0.22);
+    }
+    .eyebrow {
+      display: inline-block;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(122, 199, 255, 0.12);
+      color: var(--accent);
+      font-size: 13px;
+      letter-spacing: 0.02em;
+    }
+    h1 {
+      margin: 18px 0 14px;
+      font-size: clamp(36px, 8vw, 64px);
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+    }
+    .lead {
+      max-width: 720px;
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.6;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 26px;
+    }
+    .actions a {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 46px;
+      padding: 0 18px;
+      border-radius: 999px;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .primary {
+      background: var(--text);
+      color: #0c1219;
+    }
+    .secondary {
+      border: 1px solid var(--line);
+      color: var(--text);
+      background: rgba(255,255,255,0.04);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+    .card {
+      padding: 18px;
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background: var(--card);
+    }
+    .card h2, .section h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+    .card p, .section p, .section li {
+      color: var(--muted);
+      line-height: 1.65;
+    }
+    .section {
+      margin-top: 20px;
+      padding: 24px;
+      border-radius: 24px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.03);
+    }
+    ol, ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+    .note {
+      color: var(--warning);
+    }
+    footer {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    code {
+      padding: 2px 6px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.06);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.95em;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <div class="eyebrow">ChatType v0.1.1</div>
+      <h1>按住 F5 说话，松开就把中文直接回填到当前输入框。</h1>
+      <p class="lead">
+        ChatType 是一个原生 macOS 听写工具，面向已经在这台 Mac 上登录 ChatGPT Desktop 的用户。
+        它走本地桌面登录态，不要求额外 API key，不要求本地模型下载，核心目标就是把
+        <code>F5 -&gt; speak -&gt; paste</code> 这条链路做到足够快、足够稳。
+      </p>
+      <div class="actions">
+        <a class="primary" href="https://github.com/longbiaochen/chattype/releases/tag/v0.1.1">下载 v0.1.1</a>
+        <a class="secondary" href="https://github.com/longbiaochen/chattype">查看 GitHub 仓库</a>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <h2>产品承诺</h2>
+          <p>不额外订阅，不默认要 API key，不额外跑第二轮 AI 清洗，结果优先直接可用。</p>
+        </div>
+        <div class="card">
+          <h2>这次补齐</h2>
+          <p>麦克风首用权限、Accessibility 修复闭环、Codex 输入框回贴、简体中文定向优化。</p>
+        </div>
+        <div class="card">
+          <h2>安装要求</h2>
+          <p>必须把打包后的 <code>ChatType.app</code> 安装到 <code>/Applications</code>，不要直接从 <code>dist</code> 运行。</p>
+        </div>
+      </div>
+    </section>
+    <section class="section">
+      <h2>使用流程</h2>
+      <ol>
+        <li>下载并安装 <code>ChatType.app</code> 到 <code>/Applications/ChatType.app</code>。</li>
+        <li>确保这台 Mac 上已经安装并登录了 Codex Desktop / ChatGPT Desktop。</li>
+        <li>首次运行时授予麦克风权限。</li>
+        <li>如果你要自动回填到当前输入框，授予 Accessibility 权限。</li>
+        <li>把光标放到 Notes、Mail、Slack、Codex 等可输入位置。</li>
+        <li>按一次 <code>F5</code> 开始录音，再按一次 <code>F5</code> 结束录音并回填。</li>
+      </ol>
+    </section>
+    <section class="section">
+      <h2>权限说明</h2>
+      <ul>
+        <li>麦克风：用于录音；首用时会触发系统权限提示。</li>
+        <li>Accessibility：用于把结果回填到当前输入光标；如果目标输入框不适合直接写入，会退回安全的粘贴路径。</li>
+        <li class="note">重要：权限修复和验证都必须基于 <code>/Applications/ChatType.app</code>，不要基于 <code>dist/ChatType.app</code>。</li>
+      </ul>
+    </section>
+    <section class="section">
+      <h2>M1 Release Highlights</h2>
+      <ul>
+        <li>补全麦克风首用请求流程。</li>
+        <li>把 Accessibility 修复路径做成明确可测试的设置项。</li>
+        <li>在 Codex 这类输入框中恢复回贴，不再只丢剪贴板。</li>
+        <li>中文默认压到简体，减少偶发繁体输出。</li>
+      </ul>
+    </section>
+    <footer>
+      ChatType 依赖本地桌面登录态和上游私有转写链路；它是面向个人使用效率的工具，不把这条集成表述成稳定公开 API。
+    </footer>
+  </main>
+</body>
+</html>

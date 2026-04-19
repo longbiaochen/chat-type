@@ -1,5 +1,7 @@
 import AppKit
+import AVFoundation
 import Foundation
+import OSLog
 
 @MainActor
 final class AppCoordinator {
@@ -15,18 +17,33 @@ final class AppCoordinator {
     private let overlay = OverlayController()
     private let authClient = CodexAuthClient()
     private let latencyRecorder = LatencyRecorder()
+    private let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "me.longbiaochen.chattype",
+        category: "Permissions"
+    )
 
     private var config = AppConfig()
     private var hotkeyMonitor: HotkeyMonitor?
     private var recorder: AudioRecorder?
     private var statusMenu: StatusMenuController?
     private var preferencesWindowController: PreferencesWindowController?
+    private var microphonePermissionWindowController: MicrophonePermissionWindowController?
     private var state: State = .idle
     private var recordingLevelTimer: Timer?
     private var overlayDemoFrameIndex = 0
+    private var launchAppContext: LaunchAppContext?
 
     func start(launchMode: AppLaunchMode = .normal) {
         do {
+            if let launchBlocker = AppInstallLocation.launchBlocker() {
+                NSSound.beep()
+                showInstallRequiredAlert(message: launchBlocker.message)
+                notifier.notify(title: "ChatType install required", body: launchBlocker.message)
+                AppInstallLocation.revealApplicationsFolder()
+                NSApplication.shared.terminate(nil)
+                return
+            }
+
             statusMenu = StatusMenuController(
                 openSettingsHandler: { [weak self] in self?.openSettings() },
                 openConfigHandler: { [weak self] in self?.openConfigFolder() },
@@ -86,32 +103,41 @@ final class AppCoordinator {
 
     private func startRecording() {
         guard let recorder else { return }
-        if let message = RuntimePreflight.summary(
-            for: RuntimePreflight.issues(
-                for: config,
-                environment: ProcessInfo.processInfo.environment
-            )
-        ) {
-            stopRecordingLevelUpdates()
-            state = .idle
-            statusMenu?.update(state: .setupRequired, detail: message)
-            overlay.showError(message)
-            notifier.notify(title: "ChatType setup required", body: message)
-            openSettings()
-            return
-        }
 
+        logger.info("Start recording requested from hotkey")
         state = .processing
         statusMenu?.update(state: .processing, detail: "Requesting microphone")
         overlay.showRecording()
 
         Task { @MainActor in
             do {
+                try await requestMicrophoneAccess()
+                logger.info("Microphone access stage completed")
+
+                let issues = RuntimePreflight.issues(
+                    for: config,
+                    environment: ProcessInfo.processInfo.environment
+                )
+                if let message = RuntimePreflight.summary(for: issues) {
+                    logger.error("Runtime preflight blocked recording with \(issues.count, privacy: .public) issue(s): \(message, privacy: .public)")
+                    stopRecordingLevelUpdates()
+                    state = .idle
+                    statusMenu?.update(state: .setupRequired, detail: message)
+                    overlay.showError(message)
+                    notifier.notify(title: "ChatType setup required", body: message)
+                    openSettings()
+                    return
+                }
+
+                logger.info("Runtime preflight passed; starting AVAudioRecorder")
+                self.launchAppContext = LaunchAppContext.current()
                 try await recorder.startRecording()
+                logger.info("AVAudioRecorder started successfully")
                 state = .recording
                 statusMenu?.update(state: .recording, detail: "Recording on F5")
                 startRecordingLevelUpdates()
             } catch {
+                logger.error("Start recording failed: \(error.localizedDescription, privacy: .public)")
                 stopRecordingLevelUpdates()
                 state = .idle
                 refreshReadyState(detailOverride: error.localizedDescription, state: .error)
@@ -134,6 +160,7 @@ final class AppCoordinator {
             let transcriptionConfig = config.transcription
             let injectionConfig = config.injection
             let processingStarted = DispatchTime.now().uptimeNanoseconds
+            let launchAppContext = self.launchAppContext
 
             Task {
                 let pipeline = DictationPipeline(
@@ -154,7 +181,8 @@ final class AppCoordinator {
                             let outcome = try injector.inject(
                                 text: prepared.finalText,
                                 preserveClipboard: injectionConfig.preserveClipboard,
-                                restoreDelayMilliseconds: injectionConfig.restoreDelayMilliseconds
+                                restoreDelayMilliseconds: injectionConfig.restoreDelayMilliseconds,
+                                launchAppContext: launchAppContext
                             )
                             let injectMs = elapsedMilliseconds(since: injectStarted)
                             let totalProcessingMs = elapsedMilliseconds(since: processingStarted)
@@ -186,6 +214,7 @@ final class AppCoordinator {
                             overlay.showError(error.localizedDescription)
                             notifier.notify(title: "ChatType", body: error.localizedDescription)
                         }
+                        self.launchAppContext = nil
                     }
                 } catch {
                     await MainActor.run {
@@ -209,6 +238,7 @@ final class AppCoordinator {
                         statusMenu?.update(state: .error, detail: error.localizedDescription)
                         overlay.showError(error.localizedDescription)
                         notifier.notify(title: "ChatType", body: error.localizedDescription)
+                        self.launchAppContext = nil
                     }
                 }
 
@@ -252,6 +282,55 @@ final class AppCoordinator {
         let directoryURL = configStore.directoryURL
         try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         NSWorkspace.shared.open(directoryURL)
+    }
+
+    private func showInstallRequiredAlert(message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Install ChatType to /Applications first"
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    private func requestMicrophoneAccess() async throws {
+        let status = AudioRecorder.microphonePermissionState()
+        let previousActivationPolicy = NSApp.activationPolicy()
+
+        logger.info(
+            "Preparing microphone request with status=\(String(describing: status), privacy: .public) activationPolicy=\(String(describing: previousActivationPolicy), privacy: .public)"
+        )
+
+        if status == .undetermined {
+            if previousActivationPolicy != .regular {
+                logger.info("Temporarily switching activation policy to regular for first-run microphone prompt")
+                _ = NSApp.setActivationPolicy(.regular)
+            }
+
+            let controller = microphonePermissionWindowController ?? MicrophonePermissionWindowController()
+            microphonePermissionWindowController = controller
+            logger.info("Presenting first-run microphone permission window")
+            let shouldContinue = await controller.present()
+            logger.info("First-run microphone permission window returned shouldContinue=\(shouldContinue, privacy: .public)")
+            guard shouldContinue else {
+                if previousActivationPolicy != .regular {
+                    _ = NSApp.setActivationPolicy(previousActivationPolicy)
+                }
+                logger.error("User cancelled first-run microphone permission window")
+                throw RecorderError.microphoneDenied
+            }
+        }
+
+        defer {
+            if previousActivationPolicy != .regular {
+                logger.info("Restoring activation policy to \(String(describing: previousActivationPolicy), privacy: .public)")
+                _ = NSApp.setActivationPolicy(previousActivationPolicy)
+            }
+        }
+
+        logger.info("Calling microphone access request helper")
+        try await AudioRecorder.ensureMicrophoneAccess()
     }
 
     private func runOverlayDemo() {

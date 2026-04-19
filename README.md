@@ -2,6 +2,8 @@
 
 `ChatType` is a native macOS dictation app for people who already use ChatGPT through a local Codex desktop session and want the fastest possible `F5 -> speak -> paste` workflow.
 
+Public landing page: [longbiaochen.github.io/chattype](https://longbiaochen.github.io/chattype/)
+
 It is intentionally opinionated:
 
 - global `F5` hotkey
@@ -12,8 +14,6 @@ It is intentionally opinionated:
 - clipboard fallback when paste is not safe
 - optional advanced recovery route for OpenAI-compatible APIs
 
-The repository name is still `voice-dex`, but the launch product is `ChatType`.
-
 ## Product Promise
 
 - No extra dictation subscription
@@ -23,12 +23,12 @@ The repository name is still `voice-dex`, but the launch product is `ChatType`.
 
 ## Current Status
 
-`ChatType` `v0.1.0` is the first packaged launch candidate. It ships as an ad-hoc signed, non-notarized `.app` plus GitHub release `.zip` and `.dmg` artifacts.
+`ChatType` `v0.1.1` is the current M1 release. `./scripts/package_app.sh` expects a stable local signing identity and emits a locally signed, non-notarized `.app` plus GitHub release `.zip` and `.dmg` artifacts.
 
 ## How It Works
 
 1. Install `ChatType`
-2. Launch it on a Mac that already has Codex desktop installed and signed in with ChatGPT
+2. Install the packaged app to `/Applications/ChatType.app`, then launch that installed copy on a Mac that already has Codex desktop installed and signed in with ChatGPT
 3. Grant microphone permission
 4. Grant Accessibility if you want auto-paste
 5. Put the cursor in Notes, Mail, Slack, or another editable target
@@ -36,6 +36,7 @@ The repository name is still `voice-dex`, but the launch product is `ChatType`.
 7. `ChatType` sends the recording through the local login-state bridge to the ChatGPT backend transcription path
 8. `ChatType` applies a deterministic terminology-preservation pass when you define hidden `hintTerms`
 9. The result is pasted into the focused app or left in the clipboard when paste is not safe
+10. Chinese output defaults to Simplified Chinese unless the original speech clearly asks for Traditional Chinese
 
 ## Installation
 
@@ -47,13 +48,29 @@ The repository name is still `voice-dex`, but the launch product is `ChatType`.
 ./scripts/package_app.sh
 ```
 
-2. Launch:
+2. Install the packaged app to `/Applications`:
 
 ```bash
-open -n dist/ChatType.app
+./scripts/install_app.sh
 ```
 
-3. If macOS blocks the app on first launch:
+If you intentionally need an ad-hoc build for throwaway debugging, opt into it explicitly:
+
+```bash
+CHATTYPE_ALLOW_ADHOC_SIGNING=1 ./scripts/package_app.sh
+```
+
+That fallback is not recommended for normal use. On recent macOS versions it can open Accessibility settings without creating a toggleable `ChatType` row.
+
+3. Launch the installed app:
+
+```bash
+open -n /Applications/ChatType.app
+```
+
+Do not launch `dist/ChatType.app` directly. The `dist` copy is packaging output only; live permissions and verification must bind to `/Applications/ChatType.app`.
+
+4. If macOS blocks the app on first launch:
 
 ```bash
 xattr -dr com.apple.quarantine /path/to/ChatType.app
@@ -68,6 +85,11 @@ packaging/homebrew/Casks/chattype.rb
 ```
 
 This repo does not yet publish a dedicated Homebrew tap, but the cask file is kept current with the release artifact format.
+
+### Release Download
+
+- Releases: [github.com/longbiaochen/chattype/releases](https://github.com/longbiaochen/chattype/releases)
+- Current release page: [v0.1.1](https://github.com/longbiaochen/chattype/releases/tag/v0.1.1)
 
 ## Advanced Recovery Route
 
@@ -87,6 +109,7 @@ Instead it improves output at transcription time:
 
 - OpenAI-compatible recovery uses the official transcription `prompt` parameter
 - the desktop-login bridge attempts the same prompt and automatically retries without it if the private route rejects that field
+- Chinese output is steered to Simplified Chinese by prompt and normalized back from Traditional when needed
 - optional hidden `transcription.hintTerms` preserve filenames, product names, and other critical terms without another model call
 
 ## Repository Layout
@@ -94,9 +117,10 @@ Instead it improves output at transcription time:
 ```text
 Sources/VoiceDex/                 App source for the ChatType executable target
 Tests/VoiceDexTests/              Swift tests
-script/build_and_run.sh           Canonical local launch path
+script/build_and_run.sh           Canonical local build -> install -> run path
 scripts/check.sh                  Build + test harness
 scripts/package_app.sh            Builds dist/ChatType.app plus release zip and dmg
+scripts/install_app.sh            Installs dist/ChatType.app to /Applications/ChatType.app
 packaging/homebrew/Casks/         Homebrew Cask metadata
 scripts/install_launch_agent.sh   Installs LaunchAgent for ChatType
 docs/                             Product and release docs
@@ -116,6 +140,13 @@ Benchmark the real packaged path with your own sample audio:
 
 ```bash
 ./scripts/benchmark_stt.sh ~/bench/3s.wav ~/bench/10s.wav ~/bench/30s.wav
+```
+
+Post a release update to X through the official API CLI:
+
+```bash
+scripts/post_x.sh --print "ChatType update"
+scripts/post_x.sh "ChatType update"
 ```
 
 ## Config
@@ -146,7 +177,7 @@ That means:
 
 - [Architecture](docs/architecture.md)
 - [Release Process](docs/release.md)
-- [Release Notes](docs/releases/v0.1.0.md)
+- [Release Notes](docs/releases/v0.1.1.md)
 - [Product PRD](docs/chattype-v1-prd.md)
 
 ## License

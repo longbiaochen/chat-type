@@ -3,15 +3,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="ChatType"
-APP_BINARY="$ROOT/dist/$APP_NAME.app/Contents/MacOS/$APP_NAME"
+APP_BINARY="/Applications/$APP_NAME.app/Contents/MacOS/$APP_NAME"
 PLIST="$HOME/Library/LaunchAgents/me.longbiaochen.chattype.plist"
 OLD_PLIST="$HOME/Library/LaunchAgents/com.longbiao.chattype.plist"
 VOICEDEX_PLIST="$HOME/Library/LaunchAgents/com.longbiao.voicedex.plist"
 LEGACY_PLIST="$HOME/Library/LaunchAgents/com.longbiao.hotkeyvoice.plist"
 
 if [[ ! -x "$APP_BINARY" ]]; then
-  echo "Missing built app at $APP_BINARY. Run ./script/build_and_run.sh first." >&2
-  exit 1
+  "$ROOT/scripts/install_app.sh" >/dev/null
 fi
 
 cat >"$PLIST" <<PLIST

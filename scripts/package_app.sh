@@ -11,6 +11,26 @@ PLIST="$APP_DIR/Contents/Info.plist"
 VERSION_ENV="$ROOT/version.env"
 ICONSET_DIR="$ROOT/dist/AppIcon.iconset"
 ICON_FILE="$RESOURCES_DIR/AppIcon.icns"
+ENTITLEMENTS_FILE="$ROOT/dist/ChatType.entitlements"
+SIGNING_IDENTITY="${CHATTYPE_CODESIGN_IDENTITY:-}"
+ALLOW_ADHOC_SIGNING="${CHATTYPE_ALLOW_ADHOC_SIGNING:-0}"
+
+resolve_signing_identity() {
+  if [[ -n "$SIGNING_IDENTITY" ]]; then
+    printf '%s\n' "$SIGNING_IDENTITY"
+    return
+  fi
+
+  local resolved
+  resolved="$(security find-identity -v -p codesigning 2>/dev/null | awk -F '"' '/Apple Development:/ { print $2; exit }')"
+  if [[ -n "$resolved" ]]; then
+    printf '%s\n' "$resolved"
+    return
+  fi
+
+  resolved="$(security find-identity -v -p codesigning 2>/dev/null | awk -F '"' '/Developer ID Application:/ { print $2; exit }')"
+  printf '%s\n' "$resolved"
+}
 
 if [[ ! -f "$VERSION_ENV" ]]; then
   echo "Missing version source at $VERSION_ENV" >&2
@@ -32,6 +52,7 @@ mkdir -p "$ROOT/dist"
 rm -rf "$APP_DIR"
 rm -f "$ZIP_PATH"
 rm -f "$DMG_PATH"
+rm -f "$ENTITLEMENTS_FILE"
 rm -rf "$DMG_STAGING_DIR"
 rm -rf "$ICONSET_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$RESOURCES_DIR"
@@ -69,8 +90,6 @@ cat >"$PLIST" <<PLIST
   <string>${CHATTYPE_BUILD}</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
-  <key>LSUIElement</key>
-  <true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>ChatType records short dictation clips and sends them through your local ChatGPT desktop login path.</string>
   <key>NSPrincipalClass</key>
@@ -79,7 +98,34 @@ cat >"$PLIST" <<PLIST
 </plist>
 PLIST
 
-/usr/bin/codesign --force --sign - "$APP_DIR" >/dev/null
+cat >"$ENTITLEMENTS_FILE" <<ENTITLEMENTS
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+</dict>
+</plist>
+ENTITLEMENTS
+
+SIGNING_IDENTITY="$(resolve_signing_identity)"
+CODESIGN_ARGS=(--force)
+if [[ -n "$SIGNING_IDENTITY" ]]; then
+  CODESIGN_ARGS+=(--sign "$SIGNING_IDENTITY" --options runtime --timestamp=none --entitlements "$ENTITLEMENTS_FILE")
+  SIGNING_SUMMARY="$SIGNING_IDENTITY"
+elif [[ "$ALLOW_ADHOC_SIGNING" == "1" ]]; then
+  CODESIGN_ARGS+=(--sign - --entitlements "$ENTITLEMENTS_FILE")
+  SIGNING_SUMMARY="ad-hoc"
+else
+  echo "No Apple Development or Developer ID Application signing identity is available." >&2
+  echo "ChatType's Accessibility repair flow relies on TCC recognizing the packaged app." >&2
+  echo "Ad-hoc signing often opens System Settings without creating a toggleable ChatType row." >&2
+  echo "Install a stable code-signing identity, or rerun with CHATTYPE_ALLOW_ADHOC_SIGNING=1 only if you explicitly accept that broken repair path." >&2
+  exit 1
+fi
+
+/usr/bin/codesign "${CODESIGN_ARGS[@]}" "$APP_DIR" >/dev/null
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "$ZIP_PATH"
 mkdir -p "$DMG_STAGING_DIR"
 cp -R "$APP_DIR" "$DMG_STAGING_DIR/"
@@ -91,7 +137,9 @@ cp -R "$APP_DIR" "$DMG_STAGING_DIR/"
   "$DMG_PATH" >/dev/null
 rm -rf "$DMG_STAGING_DIR"
 rm -rf "$ICONSET_DIR"
+rm -f "$ENTITLEMENTS_FILE"
 
 echo "Packaged $APP_DIR"
+echo "Signed with $SIGNING_SUMMARY"
 echo "Created $ZIP_PATH"
 echo "Created $DMG_PATH"

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_BIN="$ROOT_DIR/dist/ChatType.app/Contents/MacOS/ChatType"
+APP_BIN="/Applications/ChatType.app/Contents/MacOS/ChatType"
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <audio-file-1> [audio-file-2 ...]"
@@ -12,6 +12,7 @@ fi
 
 if [[ ! -x "$APP_BIN" ]]; then
   "$ROOT_DIR/scripts/package_app.sh" >/dev/null
+  "$ROOT_DIR/scripts/install_app.sh" >/dev/null
 fi
 
 audio_csv=""

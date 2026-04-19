@@ -46,6 +46,7 @@ final class PreferencesWindowController: NSWindowController {
 private struct PreferencesView: View {
     @State private var config: AppConfig
     @State private var showsAdvancedRecovery: Bool
+    @State private var accessibilityRefreshNonce: Int = 0
 
     let onSave: (AppConfig) -> Void
     let onOpenConfigFolder: () -> Void
@@ -94,26 +95,27 @@ private struct PreferencesView: View {
     }
 
     private var microphoneStatus: SetupStatus {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized:
+        switch AudioRecorder.microphonePermissionState() {
+        case .granted:
             return SetupStatus(title: "Granted", subtitle: "Microphone access is ready.")
-        case .notDetermined:
+        case .undetermined:
             return SetupStatus(title: "Not requested yet", subtitle: "Press F5 once and macOS will ask for microphone access.", isReady: false)
-        case .denied, .restricted:
+        case .denied:
             return SetupStatus(title: "Needs permission", subtitle: "Enable microphone access in System Settings > Privacy & Security.", isReady: false)
-        @unknown default:
-            return SetupStatus(title: "Unknown", subtitle: "Check microphone access in System Settings.", isReady: false)
         }
     }
 
     private var accessibilityStatus: SetupStatus {
-        if AXIsProcessTrusted() {
+        _ = accessibilityRefreshNonce
+        let guidance = AccessibilityPermission.repairGuidance()
+
+        if AccessibilityPermission.isTrusted() {
             return SetupStatus(title: "Granted", subtitle: "Auto-paste is ready.")
         }
 
         return SetupStatus(
             title: "Optional but recommended",
-            subtitle: "Grant Accessibility to allow paste into the focused app. Without it, ChatType leaves text in your clipboard.",
+            subtitle: guidance.subtitle,
             isReady: false
         )
     }
@@ -202,6 +204,9 @@ private struct PreferencesView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(minWidth: 680, minHeight: 760)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            accessibilityRefreshNonce += 1
+        }
     }
 
     private var setupCard: some View {
@@ -211,6 +216,29 @@ private struct PreferencesView: View {
             setupRow(title: "Codex Desktop Login", status: hostStatus)
             setupRow(title: "Microphone", status: microphoneStatus)
             setupRow(title: "Accessibility", status: accessibilityStatus)
+            if !AccessibilityPermission.isTrusted() {
+                let guidance = AccessibilityPermission.repairGuidance()
+                if let detail = guidance.detail {
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(spacing: 10) {
+                    Button("Request Accessibility Access") {
+                        AccessibilityPermission.requestTrustIfNeeded()
+                        accessibilityRefreshNonce += 1
+                    }
+
+                    Button("Open Accessibility Settings") {
+                        AccessibilityPermission.openAccessibilitySettings()
+                    }
+
+                    Button("Refresh Status") {
+                        accessibilityRefreshNonce += 1
+                    }
+                }
+            }
         }
         .font(.system(size: 12))
         .padding(14)
@@ -226,7 +254,7 @@ private struct PreferencesView: View {
             Text("1. Install or open Codex on this Mac, then sign in with your ChatGPT account.")
             Text("2. Grant Microphone and Accessibility permissions.")
             Text("3. Put your cursor in Notes or Mail, press F5, speak for five seconds, then press F5 again.")
-            Text("4. If you only see clipboard output, grant Accessibility and try again.")
+            Text("4. If Accessibility opens without a ChatType row, use the + button there to add the packaged ChatType.app, then return here and test again.")
         }
         .font(.system(size: 12))
         .padding(14)

@@ -26,6 +26,17 @@ func terminologyNormalizerPreservesHintTermsWithoutModelRewrite() {
 }
 
 @Test
+func terminologyNormalizerConvertsTraditionalChineseToSimplifiedChinese() {
+    let result = TerminologyNormalizer().normalize(
+        text: "請把這個檔案發過來，體驗一下 chattype。",
+        hintTerms: ["ChatType"]
+    )
+
+    #expect(result.text == "请把这个档案发过来，体验一下 ChatType。")
+    #expect(result.applied == true)
+}
+
+@Test
 func transcriptionPromptBuilderIncludesDirectUseGuidanceAndHintTerms() {
     let prompt = TranscriptionPromptBuilder().buildPrompt(
         hintTerms: ["budget v2.xlsx", "ChatType"],
@@ -36,6 +47,17 @@ func transcriptionPromptBuilderIncludesDirectUseGuidanceAndHintTerms() {
     #expect(prompt.contains("直接粘贴使用"))
     #expect(prompt.contains("budget v2.xlsx"))
     #expect(prompt.contains("ChatType"))
+}
+
+@Test
+func transcriptionPromptBuilderRequestsSimplifiedChineseByDefault() {
+    let prompt = TranscriptionPromptBuilder().buildPrompt(
+        hintTerms: [],
+        locale: "zh-CN"
+    )
+
+    #expect(prompt.contains("简体中文"))
+    #expect(prompt.contains("不要输出繁体中文"))
 }
 
 @Test

@@ -7,8 +7,9 @@ struct NormalizationResult: Sendable, Equatable {
 
 struct TerminologyNormalizer: TranscriptNormalizing {
     func normalize(text: String, hintTerms: [String]) -> NormalizationResult {
-        var output = text
-        var applied = false
+        let simplifiedText = simplifiedChineseText(from: text)
+        var output = simplifiedText
+        var applied = simplifiedText != text
 
         for term in normalizedHintTerms(from: hintTerms) {
             let updated = replacingOccurrences(
@@ -22,6 +23,22 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         }
 
         return NormalizationResult(text: output, applied: applied)
+    }
+
+    private func simplifiedChineseText(from text: String) -> String {
+        let mutableText = NSMutableString(string: text)
+        let didTransform = CFStringTransform(
+            mutableText,
+            nil,
+            "Traditional-Simplified" as CFString,
+            false
+        )
+
+        guard didTransform else {
+            return text
+        }
+
+        return mutableText as String
     }
 
     private func normalizedHintTerms(from hintTerms: [String]) -> [String] {

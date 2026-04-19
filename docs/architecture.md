@@ -79,6 +79,7 @@ Behavior:
 
 - `version.env` is the single source of truth for version metadata
 - `scripts/package_app.sh` builds `dist/ChatType.app`
+- `scripts/install_app.sh` installs the packaged app to `/Applications/ChatType.app`
 - `scripts/package_app.sh` also creates `dist/ChatType-<version>-macos-<arch>.zip`
 - `scripts/package_app.sh` also creates `dist/ChatType-<version>-macos-<arch>.dmg`
 - `scripts/install_launch_agent.sh` installs `me.longbiaochen.chattype`
