@@ -32,7 +32,10 @@ The V1 architecture deliberately optimizes for zero-config usage on a Mac that a
 - `TranscriptionPromptBuilder`
   - builds the fixed “directly usable text” prompt and optional hidden hint terms
 - `TerminologyNormalizer`
-  - applies deterministic term preservation without a second model call
+  - applies deterministic post-STT terminology alignment without a second model call
+- `TypeWhisperTerminologyImporter`
+  - reads a manual snapshot from `~/Library/Application Support/TypeWhisper/dictionary.store`
+  - converts enabled TypeWhisper term rows into ChatType-owned canonical terminology entries
 - `LatencyRecorder`
   - appends per-dictation JSONL metrics under `~/Library/Application Support/ChatType/latency.jsonl`
 - `TextInjector`
@@ -66,7 +69,9 @@ Behavior:
 
 - OpenAI-compatible recovery sends a fixed prompt through the official transcriptions API
 - the desktop-login bridge tries the same prompt and retries without it if the private route rejects the field
-- hidden `transcription.hintTerms` are preserved by a deterministic normalizer
+- optional manual imports from TypeWhisper become ChatType-owned canonical terminology entries
+- imported terminology is aligned by a deterministic local normalizer after transcription
+- hidden `transcription.hintTerms` remain exact-only preservation hints
 - no second model call is used in the default product path
 
 ## Benchmarking

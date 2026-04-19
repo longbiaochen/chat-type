@@ -169,6 +169,7 @@ final class AppCoordinator {
                         config: transcriptionConfig
                     ),
                     normalizer: TerminologyNormalizer(),
+                    importedEntries: transcriptionConfig.terminology.enabled ? transcriptionConfig.terminology.importedEntries : [],
                     hintTerms: transcriptionConfig.hintTerms
                 )
 
@@ -267,6 +268,37 @@ final class AppCoordinator {
                     } catch {
                         self.overlay.showError(error.localizedDescription)
                         self.notifier.notify(title: "ChatType", body: error.localizedDescription)
+                    }
+                },
+                onImportTypeWhisperTerminology: { [weak self] currentConfig in
+                    guard let self else {
+                        return .failure(
+                            NSError(
+                                domain: "ChatType.Preferences",
+                                code: 1,
+                                userInfo: [NSLocalizedDescriptionKey: "ChatType settings are no longer available."]
+                            )
+                        )
+                    }
+
+                    do {
+                        let imported = try TypeWhisperTerminologyImporter().importEntries()
+                        var updatedConfig = currentConfig
+                        updatedConfig.transcription.terminology.enabled = true
+                        updatedConfig.transcription.terminology.importedEntries = imported.entries
+                        updatedConfig.transcription.terminology.lastImportedSource = imported.source
+                        updatedConfig.transcription.terminology.lastImportedAt = imported.importedAt
+
+                        try self.configStore.save(updatedConfig)
+                        self.config = updatedConfig
+                        self.refreshReadyState(
+                            detailOverride: "Imported \(imported.entries.count) TypeWhisper terms",
+                            state: .ready
+                        )
+
+                        return .success(updatedConfig)
+                    } catch {
+                        return .failure(error)
                     }
                 },
                 onOpenConfigFolder: { [weak self] in

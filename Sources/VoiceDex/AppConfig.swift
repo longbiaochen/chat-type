@@ -48,6 +48,7 @@ struct TranscriptionConfig: Codable, Sendable {
     var sampleRateHz: Int = 24_000
     var maxDurationSeconds: Int = 120
     var hintTerms: [String] = []
+    var terminology: TerminologyConfig = .init()
 
     init() {}
 
@@ -62,7 +63,32 @@ struct TranscriptionConfig: Codable, Sendable {
         sampleRateHz = try container.decodeIfPresent(Int.self, forKey: .sampleRateHz) ?? 24_000
         maxDurationSeconds = try container.decodeIfPresent(Int.self, forKey: .maxDurationSeconds) ?? 120
         hintTerms = try container.decodeIfPresent([String].self, forKey: .hintTerms) ?? []
+        terminology = try container.decodeIfPresent(TerminologyConfig.self, forKey: .terminology) ?? .init()
     }
+}
+
+struct TerminologyConfig: Codable, Sendable, Equatable {
+    var enabled: Bool = true
+    var importedEntries: [TerminologyEntry] = []
+    var lastImportedSource: String?
+    var lastImportedAt: String?
+
+    init() {}
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        importedEntries = try container.decodeIfPresent([TerminologyEntry].self, forKey: .importedEntries) ?? []
+        lastImportedSource = try container.decodeIfPresent(String.self, forKey: .lastImportedSource)
+        lastImportedAt = try container.decodeIfPresent(String.self, forKey: .lastImportedAt)
+    }
+}
+
+struct TerminologyEntry: Codable, Sendable, Equatable {
+    var canonical: String
+    var aliases: [String]
+    var caseSensitive: Bool
+    var source: String = "typewhisper-import"
 }
 
 struct InjectionConfig: Codable, Sendable {

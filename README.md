@@ -1,5 +1,7 @@
 # ChatType
 
+[中文说明](README.zh-CN.md)
+
 `ChatType` is a native macOS dictation app for people who already use ChatGPT through a local Codex desktop session and want the fastest possible `F5 -> speak -> paste` workflow.
 
 Public landing page: [longbiaochen.github.io/chat-type](https://longbiaochen.github.io/chat-type/)
@@ -12,6 +14,7 @@ It is intentionally opinionated:
 - single-stage STT output tuned for direct paste
 - conservative paste behavior
 - clipboard fallback when paste is not safe
+- manual TypeWhisper terminology import for stronger post-STT term alignment
 - optional advanced recovery route for OpenAI-compatible APIs
 
 ## Product Promise
@@ -23,7 +26,7 @@ It is intentionally opinionated:
 
 ## Current Status
 
-`ChatType` `v0.1.1` is the current M1 release. `./scripts/package_app.sh` expects a stable local signing identity and emits a locally signed, non-notarized `.app` plus GitHub release `.zip` and `.dmg` artifacts.
+`ChatType` `v0.1.2` is the current public release. `./scripts/package_app.sh` expects a stable local signing identity and emits a locally signed, non-notarized `.app` plus GitHub release `.zip` and `.dmg` artifacts.
 
 ## How It Works
 
@@ -31,12 +34,13 @@ It is intentionally opinionated:
 2. Install the packaged app to `/Applications/ChatType.app`, then launch that installed copy on a Mac that already has Codex desktop installed and signed in with ChatGPT
 3. Grant microphone permission
 4. Grant Accessibility if you want auto-paste
-5. Put the cursor in Notes, Mail, Slack, or another editable target
+5. Put the cursor in Notes, Mail, Slack, Codex, or another editable target
 6. Press `F5`, speak, press `F5` again
 7. `ChatType` sends the recording through the local login-state bridge to the ChatGPT backend transcription path
-8. `ChatType` applies a deterministic terminology-preservation pass when you define hidden `hintTerms`
-9. The result is pasted into the focused app or left in the clipboard when paste is not safe
-10. Chinese output defaults to Simplified Chinese unless the original speech clearly asks for Traditional Chinese
+8. Optional: import a TypeWhisper terminology snapshot in Settings to strengthen post-STT technical-term alignment
+9. `ChatType` applies a deterministic local terminology-alignment pass plus any hidden exact `hintTerms`
+10. The result is pasted into the focused app or left in the clipboard when paste is not safe
+11. Chinese output defaults to Simplified Chinese unless the original speech clearly asks for Traditional Chinese
 
 ## Installation
 
@@ -89,7 +93,18 @@ This repo does not yet publish a dedicated Homebrew tap, but the cask file is ke
 ### Release Download
 
 - Releases: [github.com/longbiaochen/chat-type/releases](https://github.com/longbiaochen/chat-type/releases)
-- Current release page: [v0.1.1](https://github.com/longbiaochen/chat-type/releases/tag/v0.1.1)
+- Current release page: [v0.1.2](https://github.com/longbiaochen/chat-type/releases/tag/v0.1.2)
+
+## TypeWhisper Terminology Import
+
+`ChatType` still avoids a second AI cleanup pass in the default product path.
+
+Instead, `v0.1.2` adds a deterministic terminology-alignment layer:
+
+- import a TypeWhisper terminology snapshot from Settings with `Import from TypeWhisper`
+- keep the imported glossary as ChatType-owned local config
+- align tool names, product names, and technical terms after STT without another model call
+- keep hidden `transcription.hintTerms` as exact-only preservation hints for filenames and other critical literals
 
 ## Advanced Recovery Route
 
@@ -100,32 +115,6 @@ That route is intentionally not part of the default onboarding. It requires:
 - your own endpoint
 - your own model choice
 - your own API key environment variable
-
-## Output Quality
-
-`ChatType` no longer uses a second AI cleanup pass in the default product path.
-
-Instead it improves output at transcription time:
-
-- OpenAI-compatible recovery uses the official transcription `prompt` parameter
-- the desktop-login bridge attempts the same prompt and automatically retries without it if the private route rejects that field
-- Chinese output is steered to Simplified Chinese by prompt and normalized back from Traditional when needed
-- optional hidden `transcription.hintTerms` preserve filenames, product names, and other critical terms without another model call
-
-## Repository Layout
-
-```text
-Sources/VoiceDex/                 App source for the ChatType executable target
-Tests/VoiceDexTests/              Swift tests
-script/build_and_run.sh           Canonical local build -> install -> run path
-scripts/check.sh                  Build + test harness
-scripts/package_app.sh            Builds dist/ChatType.app plus release zip and dmg
-scripts/install_app.sh            Installs dist/ChatType.app to /Applications/ChatType.app
-packaging/homebrew/Casks/         Homebrew Cask metadata
-scripts/install_launch_agent.sh   Installs LaunchAgent for ChatType
-docs/                             Product and release docs
-version.env                       Version metadata source
-```
 
 ## Build And Verify
 
@@ -162,6 +151,11 @@ It migrates older config from:
 - `~/Library/Application Support/VoiceDex/config.json`
 - `~/Library/Application Support/HotkeyVoice/config.json`
 
+Advanced terminology options:
+
+- import TypeWhisper terminology from the Settings window with `Import from TypeWhisper`
+- keep `transcription.hintTerms` for exact-only custom terms you want preserved even without a TypeWhisper import
+
 ## Risks And Boundaries
 
 `ChatType` V1 deliberately depends on a private backend path plus a local signed-in Codex desktop session.
@@ -175,9 +169,10 @@ That means:
 
 ## Docs
 
+- [中文说明](README.zh-CN.md)
 - [Architecture](docs/architecture.md)
 - [Release Process](docs/release.md)
-- [Release Notes](docs/releases/v0.1.1.md)
+- [Release Notes](docs/releases/v0.1.2.md)
 - [Product PRD](docs/chattype-v1-prd.md)
 
 ## License

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- Added manual TypeWhisper terminology import in Settings and persisted the imported glossary into `~/Library/Application Support/ChatType/config.json`
+- Added stronger deterministic post-STT terminology alignment without reintroducing a second AI cleanup pass
+- Exposed exact and fuzzy terminology-alignment metrics in the dictation pipeline and test suite
+- Updated public docs, release notes, landing page, and packaging metadata for the `v0.1.2` release surface
+
 ## 0.1.0
 
 - Renamed the launch product from `voice-dex` to `ChatType`

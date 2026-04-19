@@ -6,11 +6,12 @@
 2. Use `./script/build_and_run.sh` to validate the packaged app path.
 3. Keep `version.env` as the single source of truth for release version metadata.
 4. Update docs when changing:
-   - permissions
-   - host-app requirements
-   - transcription route defaults
-   - packaging or startup behavior
-   - release assets or installation steps
+  - permissions
+  - host-app requirements
+  - transcription route defaults
+  - packaging or startup behavior
+  - release assets or installation steps
+  - public README or launch copy
 
 ## Coding Standards
 
@@ -34,4 +35,4 @@ For UI changes, verify the actual window or HUD behavior in the running app.
 
 - Keep `codexChatGPTBridge` as the recommended V1 default unless there is a deliberate product decision to move away from the desktop-login route.
 - Keep `openAICompatible` as an advanced recovery path, not part of first-run onboarding.
-- If a change affects permissions, host requirements, or Gatekeeper behavior, update `README.md` and `docs/release.md` in the same change.
+- If a change affects permissions, host requirements, Gatekeeper behavior, versioned release surfaces, or launch copy, update `README.md`, `README.zh-CN.md`, and `docs/release.md` in the same change.

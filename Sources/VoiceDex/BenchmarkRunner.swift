@@ -63,6 +63,7 @@ struct BenchmarkRunner {
                         config: config.transcription
                     ),
                     normalizer: TerminologyNormalizer(),
+                    importedEntries: config.transcription.terminology.enabled ? config.transcription.terminology.importedEntries : [],
                     hintTerms: config.transcription.hintTerms
                 )
                 let coldStarted = DispatchTime.now().uptimeNanoseconds
@@ -102,6 +103,7 @@ struct BenchmarkRunner {
                         config: config.transcription
                     ),
                     normalizer: TerminologyNormalizer(),
+                    importedEntries: config.transcription.terminology.enabled ? config.transcription.terminology.importedEntries : [],
                     hintTerms: config.transcription.hintTerms
                 )
                 let warmStarted = DispatchTime.now().uptimeNanoseconds

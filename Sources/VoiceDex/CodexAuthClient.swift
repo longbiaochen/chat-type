@@ -173,7 +173,7 @@ struct CodexAuthClient: Sendable {
                     "clientInfo": [
                         "name": "chat_type",
                         "title": "ChatType",
-                        "version": "0.1.1",
+                        "version": "0.1.2",
                     ],
                 ],
             ],

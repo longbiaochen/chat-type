@@ -8,11 +8,13 @@ final class PreferencesWindowController: NSWindowController {
     init(
         config: AppConfig,
         onSave: @escaping (AppConfig) -> Void,
+        onImportTypeWhisperTerminology: @escaping (AppConfig) -> Result<AppConfig, any Error>,
         onOpenConfigFolder: @escaping () -> Void
     ) {
         let view = PreferencesView(
             initialConfig: config,
             onSave: onSave,
+            onImportTypeWhisperTerminology: onImportTypeWhisperTerminology,
             onOpenConfigFolder: onOpenConfigFolder
         )
         let hostingController = NSHostingController(rootView: view)
@@ -47,18 +49,24 @@ private struct PreferencesView: View {
     @State private var config: AppConfig
     @State private var showsAdvancedRecovery: Bool
     @State private var accessibilityRefreshNonce: Int = 0
+    @State private var terminologyImportMessage: String?
+    @State private var terminologyImportIsError = false
 
     let onSave: (AppConfig) -> Void
+    let onImportTypeWhisperTerminology: (AppConfig) -> Result<AppConfig, any Error>
     let onOpenConfigFolder: () -> Void
 
     init(
         initialConfig: AppConfig,
         onSave: @escaping (AppConfig) -> Void,
+        onImportTypeWhisperTerminology: @escaping (AppConfig) -> Result<AppConfig, any Error>,
         onOpenConfigFolder: @escaping () -> Void
     ) {
         _config = State(initialValue: initialConfig)
         _showsAdvancedRecovery = State(initialValue: initialConfig.transcription.provider == .openAICompatible)
+        _terminologyImportMessage = State(initialValue: Self.terminologyStatusMessage(for: initialConfig))
         self.onSave = onSave
+        self.onImportTypeWhisperTerminology = onImportTypeWhisperTerminology
         self.onOpenConfigFolder = onOpenConfigFolder
     }
 
@@ -182,9 +190,39 @@ private struct PreferencesView: View {
                         .padding(.top, 8)
                     }
 
-                    Text("Advanced: if you need term preservation for filenames or product names, add `transcription.hintTerms` in config.json.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Terminology Alignment")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+
+                        Text("Import a TypeWhisper terminology snapshot to strengthen post-STT alignment for tool names, product names, and other technical terms without adding a second AI cleanup pass.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 12) {
+                            Button("Import from TypeWhisper") {
+                                switch onImportTypeWhisperTerminology(config) {
+                                case .success(let updatedConfig):
+                                    config = updatedConfig
+                                    terminologyImportMessage = Self.terminologyStatusMessage(for: updatedConfig)
+                                    terminologyImportIsError = false
+                                case .failure(let error):
+                                    terminologyImportMessage = error.localizedDescription
+                                    terminologyImportIsError = true
+                                }
+                            }
+
+                            Text("`transcription.hintTerms` still works for exact-only custom terms in `config.json`.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if let terminologyImportMessage {
+                            Text(terminologyImportMessage)
+                                .font(.system(size: 11))
+                                .foregroundStyle(terminologyImportIsError ? .red : .secondary)
+                        }
+                    }
                 }
 
                 settingsCard(title: "Insertion") {
@@ -207,6 +245,19 @@ private struct PreferencesView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             accessibilityRefreshNonce += 1
         }
+    }
+
+    private static func terminologyStatusMessage(for config: AppConfig) -> String? {
+        let importedEntries = config.transcription.terminology.importedEntries
+        guard !importedEntries.isEmpty else {
+            return nil
+        }
+
+        if let timestamp = config.transcription.terminology.lastImportedAt {
+            return "Imported \(importedEntries.count) TypeWhisper terms at \(timestamp)."
+        }
+
+        return "Imported \(importedEntries.count) TypeWhisper terms."
     }
 
     private var setupCard: some View {

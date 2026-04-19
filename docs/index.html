@@ -138,7 +138,7 @@
 <body>
   <main>
     <section class="hero">
-      <div class="eyebrow">ChatType v0.1.1</div>
+      <div class="eyebrow">ChatType v0.1.2</div>
       <h1>按住 F5 说话，松开就把中文直接回填到当前输入框。</h1>
       <p class="lead">
         ChatType 是一个原生 macOS 听写工具，面向已经在这台 Mac 上登录 ChatGPT Desktop 的用户。
@@ -146,7 +146,7 @@
         <code>F5 -&gt; speak -&gt; paste</code> 这条链路做到足够快、足够稳。
       </p>
       <div class="actions">
-        <a class="primary" href="https://github.com/longbiaochen/chat-type/releases/tag/v0.1.1">下载 v0.1.1</a>
+        <a class="primary" href="https://github.com/longbiaochen/chat-type/releases/tag/v0.1.2">下载 v0.1.2</a>
         <a class="secondary" href="https://github.com/longbiaochen/chat-type">查看 GitHub 仓库</a>
       </div>
       <div class="grid">
@@ -155,8 +155,8 @@
           <p>不额外订阅，不默认要 API key，不额外跑第二轮 AI 清洗，结果优先直接可用。</p>
         </div>
         <div class="card">
-          <h2>这次补齐</h2>
-          <p>麦克风首用权限、Accessibility 修复闭环、Codex 输入框回贴、简体中文定向优化。</p>
+          <h2>这次更新</h2>
+          <p>支持从 TypeWhisper 手动导入术语表，并在 STT 之后做更强的本地术语对齐，不引入第二轮 AI 清洗。</p>
         </div>
         <div class="card">
           <h2>安装要求</h2>
@@ -184,12 +184,12 @@
       </ul>
     </section>
     <section class="section">
-      <h2>M1 Release Highlights</h2>
+      <h2>v0.1.2 Highlights</h2>
       <ul>
-        <li>补全麦克风首用请求流程。</li>
-        <li>把 Accessibility 修复路径做成明确可测试的设置项。</li>
-        <li>在 Codex 这类输入框中恢复回贴，不再只丢剪贴板。</li>
-        <li>中文默认压到简体，减少偶发繁体输出。</li>
+        <li>设置页新增 <code>Import from TypeWhisper</code>，导入成功后持久化到 ChatType 自己的配置里。</li>
+        <li>术语对齐仍然是本地确定性后处理，不把产品路径改回第二次模型清洗。</li>
+        <li>默认 public path 仍然是本机已登录 Codex Desktop + <code>F5 -&gt; speak -&gt; paste</code>。</li>
+        <li>粘贴和剪贴板回退策略不变，安装路径仍然必须是 <code>/Applications/ChatType.app</code>。</li>
       </ul>
     </section>
     <footer>
