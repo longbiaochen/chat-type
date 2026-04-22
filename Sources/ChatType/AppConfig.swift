@@ -92,14 +92,14 @@ struct TerminologyEntry: Codable, Sendable, Equatable {
 }
 
 struct InjectionConfig: Codable, Sendable {
-    var preserveClipboard: Bool = true
+    var preserveClipboard: Bool = false
     var restoreDelayMilliseconds: UInt64 = 350
 
     init() {}
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        preserveClipboard = try container.decodeIfPresent(Bool.self, forKey: .preserveClipboard) ?? true
+        preserveClipboard = try container.decodeIfPresent(Bool.self, forKey: .preserveClipboard) ?? false
         restoreDelayMilliseconds = try container.decodeIfPresent(UInt64.self, forKey: .restoreDelayMilliseconds) ?? 350
     }
 }

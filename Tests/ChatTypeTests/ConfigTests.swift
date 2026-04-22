@@ -12,6 +12,7 @@ func defaultConfigUsesChatTypeDesktopLoginDefaults() throws {
     #expect(config.transcription.openAIAuthTokenEnv == "OPENAI_API_KEY")
     #expect(config.transcription.hintTerms.isEmpty)
     #expect(config.transcription.chatGPTURL == "https://chatgpt.com/backend-api/transcribe")
+    #expect(config.injection.preserveClipboard == false)
 }
 
 @Test
@@ -107,6 +108,7 @@ func legacyCleanupConfigStillDecodesWithoutCrash() throws {
     let decoded = try JSONDecoder().decode(AppConfig.self, from: json)
     #expect(decoded.transcription.provider == .codexChatGPTBridge)
     #expect(decoded.transcription.hintTerms.isEmpty)
+    #expect(decoded.injection.preserveClipboard == false)
 }
 
 @Test

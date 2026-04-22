@@ -179,7 +179,7 @@
       <h2>权限说明</h2>
       <ul>
         <li>麦克风：用于录音；首用时会触发系统权限提示。</li>
-        <li>Accessibility：用于把结果回填到当前输入光标；如果目标输入框不适合直接写入，会退回安全的粘贴路径。</li>
+        <li>Accessibility：用于把结果回填到当前输入光标；只有检测到可编辑目标时才会报告粘贴成功，否则保留在剪贴板供手动粘贴。</li>
         <li class="note">重要：权限修复和验证都必须基于 <code>/Applications/ChatType.app</code>，不要基于 <code>dist/ChatType.app</code>。</li>
       </ul>
     </section>
@@ -189,7 +189,7 @@
         <li>设置页新增 <code>Import from TypeWhisper</code>，导入成功后持久化到 ChatType 自己的配置里。</li>
         <li>术语对齐仍然是本地确定性后处理，不把产品路径改回第二次模型清洗。</li>
         <li>默认 public path 仍然是本机已登录 Codex Desktop + <code>F5 -&gt; speak -&gt; paste</code>。</li>
-        <li>粘贴和剪贴板回退策略不变，安装路径仍然必须是 <code>/Applications/ChatType.app</code>。</li>
+        <li>剪贴板默认保留最后一次转写结果，光标丢失时可以直接手动粘贴；安装路径仍然必须是 <code>/Applications/ChatType.app</code>。</li>
       </ul>
     </section>
     <footer>

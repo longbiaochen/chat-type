@@ -12,8 +12,8 @@ It is intentionally opinionated:
 - native menu bar app
 - zero-config default route through your local Codex desktop login state
 - single-stage STT output tuned for direct paste
-- conservative paste behavior
-- clipboard fallback when paste is not safe
+- conservative paste behavior: only paste when an editable target is detected
+- clipboard fallback when paste is not safe, with the latest transcript kept available for manual `Cmd+V`
 - manual TypeWhisper terminology import for stronger post-STT term alignment
 - optional advanced recovery route for OpenAI-compatible APIs
 
@@ -42,7 +42,7 @@ It is intentionally opinionated:
 10. `ChatType` sends the recording through the local login-state bridge to the ChatGPT backend transcription path
 11. Optional: import a TypeWhisper terminology snapshot in Settings to strengthen post-STT technical-term alignment
 12. `ChatType` applies a deterministic local terminology-alignment pass plus any hidden exact `hintTerms`
-13. The result is pasted into the focused app or left in the clipboard when paste is not safe
+13. The result is pasted into the focused app only when an editable target is detected; otherwise it is left in the clipboard for manual `Cmd+V`
 14. Chinese output defaults to Simplified Chinese unless the original speech clearly asks for Traditional Chinese
 
 ## Installation

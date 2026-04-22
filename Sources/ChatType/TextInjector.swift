@@ -155,29 +155,48 @@ final class TextInjector: TextInjecting {
         accessibilityTrusted: Bool,
         editableTextSnapshot: EditableTextSnapshot?,
         fallbackEditableTextSnapshot: EditableTextSnapshot?,
-        hasEditableTextFocus: Bool,
-        allowsLaunchAppPasteFallback: Bool
+        hasEditableTextFocus: Bool
     ) -> TextInsertionPlan {
         guard accessibilityTrusted else {
             return .clipboardFallback(reason: .accessibilityPermissionRequired)
         }
 
         if let editableTextSnapshot,
+           !isPlaceholderOnlySnapshot(editableTextSnapshot),
            let mutation = directInsertionMutation(text: text, snapshot: editableTextSnapshot) {
             return .directInsert(mutation)
         }
 
         if let fallbackEditableTextSnapshot,
+           !isPlaceholderOnlySnapshot(fallbackEditableTextSnapshot),
            let mutation = directInsertionMutation(text: text, snapshot: fallbackEditableTextSnapshot) {
             return .directInsert(mutation)
         }
 
-        guard hasEditableTextFocus || allowsLaunchAppPasteFallback else {
+        guard hasEditableTextFocus else {
             return .clipboardFallback(reason: .noEditableTarget)
         }
 
         return .keyPressPaste
     }
+
+    private nonisolated static func isPlaceholderOnlySnapshot(_ snapshot: EditableTextSnapshot) -> Bool {
+        let normalizedValue = snapshot.value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        guard Self.knownPlaceholderValues.contains(normalizedValue) else {
+            return false
+        }
+
+        return snapshot.selectedRange.length == 0
+    }
+
+    private nonisolated static let knownPlaceholderValues: Set<String> = [
+        "ask for follow-up changes",
+        "ask codex anything. @ to use plugins or use files",
+        "ask codex anything, @ add files, / for commands, $ for skills",
+    ]
 
     func inject(
         text: String,
@@ -195,21 +214,16 @@ final class TextInjector: TextInjecting {
         let hasEditableTextFocus = accessibilityTrusted && (
             editableTextTarget != nil || FocusedElementInspector.hasEditableTextFocus()
         )
-        let allowsLaunchAppPasteFallback = accessibilityTrusted &&
-            editableTextTarget == nil &&
-            fallbackTarget == nil &&
-            launchAppContext?.processIdentifier != 0
         let plan = Self.injectionPlan(
             text: text,
             accessibilityTrusted: accessibilityTrusted,
             editableTextSnapshot: editableTextTarget?.snapshot,
             fallbackEditableTextSnapshot: fallbackTarget?.snapshot,
-            hasEditableTextFocus: hasEditableTextFocus,
-            allowsLaunchAppPasteFallback: allowsLaunchAppPasteFallback
+            hasEditableTextFocus: hasEditableTextFocus
         )
 
         logger.info(
-            "Injection plan resolved to \(String(describing: plan), privacy: .public); currentEditableTarget=\(editableTextTarget != nil, privacy: .public); fallbackEditableTarget=\(fallbackTarget != nil, privacy: .public); currentEditableFocus=\(hasEditableTextFocus, privacy: .public); launchAppPasteFallback=\(allowsLaunchAppPasteFallback, privacy: .public)"
+            "Injection plan resolved to \(String(describing: plan), privacy: .public); currentEditableTarget=\(editableTextTarget != nil, privacy: .public); fallbackEditableTarget=\(fallbackTarget != nil, privacy: .public); currentEditableFocus=\(hasEditableTextFocus, privacy: .public)"
         )
 
         switch plan {

@@ -23,7 +23,8 @@
    - first-run microphone flow still surfaces the native macOS system prompt
    - denied microphone flow jumps to `Privacy & Security > Microphone`
    - Accessibility guidance opens the correct page and shows the drag-to-authorize helper for the packaged app
-   - paste vs clipboard fallback behaves correctly
+   - paste only reports success when an editable focus target exists
+   - clipboard fallback keeps the latest transcript available for manual `Cmd+V`
    - settings do not expose a second AI cleanup stage in the main flow
    - TypeWhisper terminology import is visible in Settings and succeeds against a valid local dictionary
    - output remains directly usable without a second model call

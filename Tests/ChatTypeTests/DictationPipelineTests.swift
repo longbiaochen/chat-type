@@ -110,6 +110,7 @@ func transcriptionPromptBuilderIncludesDirectUseGuidanceAndHintTerms() {
 
     #expect(prompt.contains("输出带自然标点"))
     #expect(prompt.contains("直接粘贴使用"))
+    #expect(prompt.contains("不要把系统界面、输入框提示、按钮文案当作语音内容输出"))
     #expect(prompt.contains("budget v2.xlsx"))
     #expect(prompt.contains("ChatType"))
 }
@@ -260,6 +261,130 @@ func dictationPipelineStripsTrailingCodexComposerArtifactWhenItAppearsOnSeparate
 
     let audio = RecordedAudio(
         fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("fake-4.wav"),
+        durationMs: 2_000
+    )
+
+    let result = try await pipeline.prepare(audio: audio)
+    #expect(result.finalText == "请把这段话发给产品同学确认一下。")
+    #expect(result.normalizationApplied == true)
+}
+
+@Test
+func dictationPipelineStripsTrailingCodexFollowUpPlaceholder() async throws {
+    let pipeline = DictationPipeline(
+        transcriber: FakeTranscriber(
+            result: TranscriptionResult(
+                text: "请把这段话发给产品同学确认一下。 Ask for follow-up changes",
+                metrics: .init(
+                    provider: .codexChatGPTBridge,
+                    audioDurationMs: 2_000,
+                    audioBytes: 128_000,
+                    authMs: 50,
+                    transcribeMs: 400,
+                    promptIncluded: false
+                )
+            )
+        ),
+        normalizer: TerminologyNormalizer(),
+        importedEntries: [],
+        hintTerms: []
+    )
+
+    let audio = RecordedAudio(
+        fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("fake-5.wav"),
+        durationMs: 2_000
+    )
+
+    let result = try await pipeline.prepare(audio: audio)
+    #expect(result.finalText == "请把这段话发给产品同学确认一下。")
+    #expect(result.normalizationApplied == true)
+}
+
+@Test
+func dictationPipelineStripsTrailingCodexFollowUpPlaceholderWithZeroWidthBoundaryNoise() async throws {
+    let pipeline = DictationPipeline(
+        transcriber: FakeTranscriber(
+            result: TranscriptionResult(
+                text: "请把这段话发给产品同学确认一下。 Ask for follow-up changes\u{200B}",
+                metrics: .init(
+                    provider: .codexChatGPTBridge,
+                    audioDurationMs: 2_000,
+                    audioBytes: 128_000,
+                    authMs: 50,
+                    transcribeMs: 400,
+                    promptIncluded: false
+                )
+            )
+        ),
+        normalizer: TerminologyNormalizer(),
+        importedEntries: [],
+        hintTerms: []
+    )
+
+    let audio = RecordedAudio(
+        fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("fake-6.wav"),
+        durationMs: 2_000
+    )
+
+    let result = try await pipeline.prepare(audio: audio)
+    #expect(result.finalText == "请把这段话发给产品同学确认一下。")
+    #expect(result.normalizationApplied == true)
+}
+
+@Test
+func dictationPipelineStripsTrailingCodexFollowUpPlaceholderWithAgentHint() async throws {
+    let pipeline = DictationPipeline(
+        transcriber: FakeTranscriber(
+            result: TranscriptionResult(
+                text: "请把这段话发给产品同学确认一下。 Ask for follow-up changes or use @ to tag an agent",
+                metrics: .init(
+                    provider: .codexChatGPTBridge,
+                    audioDurationMs: 2_000,
+                    audioBytes: 128_000,
+                    authMs: 50,
+                    transcribeMs: 400,
+                    promptIncluded: false
+                )
+            )
+        ),
+        normalizer: TerminologyNormalizer(),
+        importedEntries: [],
+        hintTerms: []
+    )
+
+    let audio = RecordedAudio(
+        fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("fake-7.wav"),
+        durationMs: 2_000
+    )
+
+    let result = try await pipeline.prepare(audio: audio)
+    #expect(result.finalText == "请把这段话发给产品同学确认一下。")
+    #expect(result.normalizationApplied == true)
+}
+
+@Test
+func dictationPipelineStripsTrailingCodexComposerArtifactForModernLocalPlaceholder() async throws {
+    let pipeline = DictationPipeline(
+        transcriber: FakeTranscriber(
+            result: TranscriptionResult(
+                text: "请把这段话发给产品同学确认一下。 Ask Codex anything, @ add files, / for commands, $ for skills",
+                metrics: .init(
+                    provider: .codexChatGPTBridge,
+                    audioDurationMs: 2_000,
+                    audioBytes: 128_000,
+                    authMs: 50,
+                    transcribeMs: 400,
+                    promptIncluded: false
+                )
+            )
+        ),
+        normalizer: TerminologyNormalizer(),
+        importedEntries: [],
+        hintTerms: []
+    )
+
+    let audio = RecordedAudio(
+        fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("fake-8.wav"),
         durationMs: 2_000
     )
 

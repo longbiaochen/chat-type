@@ -11,6 +11,7 @@
 - Do not treat screenshots, logs, window-state inspection, or a single happy-path run as completion for interactive UI work. Use them only as supporting evidence around a full live interaction pass.
 - Keep paste behavior conservative: paste only when a focused editable target is detected; otherwise leave the final text in the clipboard.
 - For this repo, "ship it" means more than source changes: run the canonical harness, build the packaged app, install it to `/Applications/ChatType.app`, validate behavior from that installed app, and keep release-facing docs current.
+- After any ChatType fix reaches test/acceptance green, reinstall the freshly built `dist/ChatType.app` to `/Applications/ChatType.app` before reporting completion so the operator can use the fixed app immediately.
 - For ChatType interaction changes, user-flow closure should cover the primary success path, the cancel or close path, the retry or re-entry path, and any obvious alternate interaction path for the same task when one exists.
 - For ChatType closeouts, report which installed-app user flow was exercised, which live verification path was used, and what exact live outcome was observed.
 - ChatType Computer Use acceptance should, when applicable, cover this loop on the installed app:

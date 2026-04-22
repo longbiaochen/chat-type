@@ -1,5 +1,11 @@
 # Changelog
 
+## Next
+
+- Defaulted `Restore clipboard after paste` to off so the latest transcript stays available for manual `Cmd+V` recovery
+- Tightened paste safety so ChatType only reports `Pasted transcript` when an editable focus signal exists; otherwise it leaves the transcript in the clipboard
+- Added regression coverage for Codex placeholder artifacts and no-focus clipboard fallback behavior
+
 ## 0.1.2
 
 - Added manual TypeWhisper terminology import in Settings and persisted the imported glossary into `~/Library/Application Support/ChatType/config.json`

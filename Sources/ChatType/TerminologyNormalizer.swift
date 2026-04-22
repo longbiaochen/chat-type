@@ -420,8 +420,11 @@ struct TerminologyNormalizer: TranscriptNormalizing {
     }
 
     private func stripKnownTrailingArtifacts(from text: String) -> String {
+        let trailingBoundaryNoise = "[\\s\u{200B}\u{200C}\u{200D}\u{FEFF}\u{2060}]*"
         let patterns = [
-            #"\s*Ask Codex anything\. @ to use plugins or use files\s*$"#,
+            "\\s*Ask Codex anything\\. @ to use plugins or use files\(trailingBoundaryNoise)$",
+            "\\s*Ask Codex anything(?:\\.\\s*@ to use plugins or use files|,\\s*@ add files,\\s*/ for commands,\\s*\\$ for skills)?\(trailingBoundaryNoise)$",
+            "\\s*Ask for follow-up changes(?:\\s+or(?:\\s+use)?\\s+@\\s+to\\s+tag\\s+an\\s+agent)?\(trailingBoundaryNoise)$",
         ]
 
         var output = text
