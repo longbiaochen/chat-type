@@ -18,6 +18,7 @@ final class AppCoordinator {
         @escaping () -> Void
     ) -> any StatusMenuUpdating
     typealias PipelineFactory = @Sendable (TranscriptionConfig, CodexAuthClient) -> any DictationPreparing
+    typealias LaunchAppContextProvider = @MainActor () -> LaunchAppContext?
 
     let configStore: ConfigStore
     let notifier: any NotificationDispatching
@@ -28,6 +29,7 @@ final class AppCoordinator {
     let recorderFactory: RecorderFactory
     let statusMenuFactory: StatusMenuFactory
     let pipelineFactory: PipelineFactory
+    let launchAppContextProvider: LaunchAppContextProvider
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "me.longbiaochen.chattype",
         category: "Permissions"
@@ -74,7 +76,8 @@ final class AppCoordinator {
                 importedEntries: transcriptionConfig.terminology.enabled ? transcriptionConfig.terminology.importedEntries : [],
                 hintTerms: transcriptionConfig.hintTerms
             )
-        }
+        },
+        launchAppContextProvider: @escaping LaunchAppContextProvider = { LaunchAppContext.current() }
     ) {
         self.configStore = configStore
         self.config = config
@@ -87,6 +90,7 @@ final class AppCoordinator {
         self.recorderFactory = recorderFactory
         self.statusMenuFactory = statusMenuFactory
         self.pipelineFactory = pipelineFactory
+        self.launchAppContextProvider = launchAppContextProvider
         self.overlay.onCancel = { [weak self] in
             self?.cancelCurrentSession()
         }
@@ -189,6 +193,7 @@ final class AppCoordinator {
         logger.info("Start recording requested from hotkey")
         let sessionID = UUID()
         activeSessionID = sessionID
+        launchAppContext = launchAppContextProvider()
         state = .processing
         statusMenu?.update(state: .processing, detail: "Requesting microphone")
         overlay.showProcessing()
@@ -219,7 +224,6 @@ final class AppCoordinator {
                 }
 
                 logger.info("Runtime preflight passed; starting recording session")
-                self.launchAppContext = LaunchAppContext.current()
                 try await recorder.startRecording()
                 guard self.shouldContinue(sessionID: sessionID) else {
                     try? recorder.cancelRecording()
@@ -450,7 +454,8 @@ final class AppCoordinator {
 
     private func requestMicrophoneAccess() async throws {
         let status = AudioRecorder.microphonePermissionState()
-        let previousActivationPolicy = NSApp.activationPolicy()
+        let app = NSApplication.shared
+        let previousActivationPolicy = app.activationPolicy()
 
         logger.info(
             "Preparing microphone request with status=\(String(describing: status), privacy: .public) activationPolicy=\(String(describing: previousActivationPolicy), privacy: .public)"
@@ -459,7 +464,7 @@ final class AppCoordinator {
         if status == .undetermined {
             if previousActivationPolicy != .regular {
                 logger.info("Temporarily switching activation policy to regular for first-run microphone prompt")
-                _ = NSApp.setActivationPolicy(.regular)
+                _ = app.setActivationPolicy(.regular)
             }
 
             let controller = microphonePermissionWindowController ?? MicrophonePermissionWindowController()
@@ -469,7 +474,7 @@ final class AppCoordinator {
             logger.info("First-run microphone permission window returned shouldContinue=\(shouldContinue, privacy: .public)")
             guard shouldContinue else {
                 if previousActivationPolicy != .regular {
-                    _ = NSApp.setActivationPolicy(previousActivationPolicy)
+                    _ = app.setActivationPolicy(previousActivationPolicy)
                 }
                 logger.error("User cancelled first-run microphone permission window")
                 throw RecorderError.microphoneDenied
@@ -479,7 +484,7 @@ final class AppCoordinator {
         defer {
             if previousActivationPolicy != .regular {
                 logger.info("Restoring activation policy to \(String(describing: previousActivationPolicy), privacy: .public)")
-                _ = NSApp.setActivationPolicy(previousActivationPolicy)
+                _ = app.setActivationPolicy(previousActivationPolicy)
             }
         }
 

@@ -6,6 +6,7 @@ struct OverlayStylePreset: Sendable, Equatable {
     let recordingPillWidth: CGFloat
     let pillHeight: CGFloat
     let errorPillWidth: CGFloat
+    let bottomInset: CGFloat
     let cornerRadius: CGFloat
     let contentPaddingH: CGFloat
     let contentPaddingV: CGFloat
@@ -28,16 +29,17 @@ struct OverlayStylePreset: Sendable, Equatable {
     let timerOpacity: CGFloat
 
     static let typeWhisperIndicator = OverlayStylePreset(
-        pillWidth: 220,
-        recordingPillWidth: 246,
-        pillHeight: 48,
-        errorPillWidth: 318,
-        cornerRadius: 16,
-        contentPaddingH: 12,
-        contentPaddingV: 9,
-        leadingVisualWidth: 62,
-        leadingVisualHeight: 22,
-        textGap: 8,
+        pillWidth: 196,
+        recordingPillWidth: 224,
+        pillHeight: 44,
+        errorPillWidth: 286,
+        bottomInset: 24,
+        cornerRadius: 15,
+        contentPaddingH: 10,
+        contentPaddingV: 8,
+        leadingVisualWidth: 54,
+        leadingVisualHeight: 20,
+        textGap: 7,
         waveformBarCount: 9,
         waveformBarSpacing: 3,
         waveformMinimumBarHeight: 6,
@@ -46,12 +48,12 @@ struct OverlayStylePreset: Sendable, Equatable {
         processingAutoHideDelay: nil,
         successAutoHideDelay: 1.2,
         errorAutoHideDelay: 2.0,
-        inlineCancelControlSize: 16,
-        inlineControlGap: 6,
-        inlineControlReservedWidth: 22,
-        timerWidth: 36,
-        timerFontSize: 11,
-        timerOpacity: 0.76
+        inlineCancelControlSize: 14,
+        inlineControlGap: 5,
+        inlineControlReservedWidth: 20,
+        timerWidth: 34,
+        timerFontSize: 10,
+        timerOpacity: 0.72
     )
 
     func width(for state: OverlayVisualState) -> CGFloat {

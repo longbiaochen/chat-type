@@ -6,12 +6,13 @@ import Testing
 func minimalOverlayPresetUsesNineBarVoiceGlyph() {
     let preset = OverlayStylePreset.typeWhisperIndicator
 
-    #expect(preset.pillHeight == 48)
-    #expect(preset.cornerRadius == 16)
+    #expect(preset.pillHeight == 44)
+    #expect(preset.cornerRadius == 15)
+    #expect(preset.bottomInset == 24)
     #expect(preset.waveformBarCount == 9)
     #expect(preset.showsTranscriptPreview == false)
-    #expect(preset.inlineCancelControlSize == 16)
-    #expect(preset.timerFontSize == 11)
+    #expect(preset.inlineCancelControlSize == 14)
+    #expect(preset.timerFontSize == 10)
 }
 
 @Test
@@ -116,6 +117,21 @@ func overlayRecordingWidthExpandsToFitTimer() {
     )
     #expect(preset.width(for: .error("boom")) == preset.errorPillWidth)
     #expect(preset.width(for: .processing) >= preset.inlineControlReservedWidth)
+}
+
+@MainActor
+@Test
+func overlayPanelPlacementStaysNearBottomEdge() {
+    let preset = OverlayStylePreset.typeWhisperIndicator
+    let visibleFrame = CGRect(x: 40, y: 30, width: 1440, height: 860)
+    let frame = OverlayController.panelFrame(
+        for: CGSize(width: preset.width(for: .processing), height: preset.pillHeight),
+        in: visibleFrame,
+        bottomInset: preset.bottomInset
+    )
+
+    #expect(frame.minY == visibleFrame.minY + preset.bottomInset)
+    #expect(abs(frame.midX - visibleFrame.midX) < 0.0001)
 }
 
 @MainActor

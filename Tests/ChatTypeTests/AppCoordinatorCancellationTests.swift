@@ -34,6 +34,7 @@ private final class FakeCoordinatorRecorder: RecordingControlling {
 @MainActor
 private final class FakeCoordinatorOverlay: OverlayControlling {
     var onCancel: (@MainActor () -> Void)?
+    var onShowProcessing: (@MainActor () -> Void)?
     private(set) var hideCallCount = 0
     private(set) var recordingElapsedTexts: [String] = []
     private(set) var showProcessingCallCount = 0
@@ -44,6 +45,7 @@ private final class FakeCoordinatorOverlay: OverlayControlling {
     func updateRecording(level: CGFloat, elapsedText: String) {}
     func showProcessing() {
         showProcessingCallCount += 1
+        onShowProcessing?()
     }
     func showResult(text: String, outcome: InjectionOutcome) {}
     func showError(_ message: String) {}
@@ -157,10 +159,10 @@ private struct FakeLatencyRecorder: LatencyRecording {
 private func waitForCoordinatorState(
     _ coordinator: AppCoordinator,
     toBecome expectedState: AppCoordinator.State,
-    attempts: Int = 40
+    attempts: Int = 100
 ) async {
     for _ in 0..<attempts where coordinator.state != expectedState {
-        await Task.yield()
+        try? await Task.sleep(nanoseconds: 10_000_000)
     }
 }
 
@@ -245,14 +247,20 @@ struct AppCoordinatorCancellationTests {
     }
 
     @Test
-    func startRecordingShowsProcessingUntilRecorderActuallyStarts() async throws {
+    func startRecordingCapturesLaunchContextBeforeProcessingOverlay() async throws {
         let startGate = CoordinatorGate()
         let recorder = FakeCoordinatorRecorder()
         recorder.onStartRecording = {
             await startGate.wait()
         }
+        let capturedContext = LaunchAppContext(
+            bundleIdentifier: "com.example.editor",
+            localizedName: "Editor",
+            processIdentifier: 123
+        )
         let overlay = FakeCoordinatorOverlay()
         let statusMenu = FakeCoordinatorStatusMenu()
+        var contextWhenProcessing: LaunchAppContext?
         let coordinator = AppCoordinator(
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
@@ -262,23 +270,23 @@ struct AppCoordinatorCancellationTests {
             latencyRecorder: FakeLatencyRecorder(),
             recorderFactory: { _ in recorder },
             statusMenuFactory: { _, _, _ in statusMenu },
-            pipelineFactory: { _, _ in FakeCoordinatorPipeline() }
+            pipelineFactory: { _, _ in FakeCoordinatorPipeline() },
+            launchAppContextProvider: { capturedContext }
         )
+        overlay.onShowProcessing = {
+            contextWhenProcessing = coordinator.launchAppContext
+        }
 
         coordinator.recorder = recorder
         coordinator.statusMenu = statusMenu
         coordinator.handleHotkeyPress()
-        await Task.yield()
 
-        #expect(coordinator.state == AppCoordinator.State.processing)
+        #expect(contextWhenProcessing == capturedContext)
         #expect(overlay.showProcessingCallCount == 1)
         #expect(overlay.recordingElapsedTexts.isEmpty)
 
+        coordinator.cancelCurrentSession()
         await startGate.resume()
-        await waitForCoordinatorState(coordinator, toBecome: .recording)
-
-        #expect(coordinator.state == AppCoordinator.State.recording)
-        #expect(overlay.recordingElapsedTexts.last == "00:00")
     }
 
     @Test

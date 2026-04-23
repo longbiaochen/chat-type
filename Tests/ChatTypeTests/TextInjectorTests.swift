@@ -116,7 +116,8 @@ func injectionPlanPrefersDirectInsertionWhenFocusedTextSnapshotIsAvailable() {
         accessibilityTrusted: true,
         editableTextSnapshot: snapshot,
         fallbackEditableTextSnapshot: nil,
-        hasEditableTextFocus: true
+        hasEditableTextFocus: true,
+        hasFallbackEditableTextFocus: false
     )
 
     #expect(
@@ -141,7 +142,8 @@ func injectionPlanUsesNativePasteWhenFocusedSnapshotIsOnlyCodexPlaceholder() {
         accessibilityTrusted: true,
         editableTextSnapshot: snapshot,
         fallbackEditableTextSnapshot: nil,
-        hasEditableTextFocus: true
+        hasEditableTextFocus: true,
+        hasFallbackEditableTextFocus: false
     )
 
     #expect(plan == .keyPressPaste)
@@ -154,7 +156,8 @@ func injectionPlanDoesNotPasteWhenOnlyLaunchAppContextExists() {
         accessibilityTrusted: true,
         editableTextSnapshot: nil,
         fallbackEditableTextSnapshot: nil,
-        hasEditableTextFocus: false
+        hasEditableTextFocus: false,
+        hasFallbackEditableTextFocus: false
     )
 
     #expect(plan == .clipboardFallback(reason: .noEditableTarget))
@@ -167,7 +170,22 @@ func injectionPlanUsesNativePasteWhenFocusedEditorIsNotDirectlyWritable() {
         accessibilityTrusted: true,
         editableTextSnapshot: nil,
         fallbackEditableTextSnapshot: nil,
-        hasEditableTextFocus: true
+        hasEditableTextFocus: true,
+        hasFallbackEditableTextFocus: false
+    )
+
+    #expect(plan == .keyPressPaste)
+}
+
+@Test
+func injectionPlanUsesNativePasteWhenLaunchAppEditorStillHasFocus() {
+    let plan = TextInjector.injectionPlan(
+        text: "ChatType",
+        accessibilityTrusted: true,
+        editableTextSnapshot: nil,
+        fallbackEditableTextSnapshot: nil,
+        hasEditableTextFocus: false,
+        hasFallbackEditableTextFocus: true
     )
 
     #expect(plan == .keyPressPaste)
@@ -180,7 +198,8 @@ func injectionPlanStillUsesClipboardWhenNoEditorSignalExists() {
         accessibilityTrusted: true,
         editableTextSnapshot: nil,
         fallbackEditableTextSnapshot: nil,
-        hasEditableTextFocus: false
+        hasEditableTextFocus: false,
+        hasFallbackEditableTextFocus: false
     )
 
     #expect(plan == .clipboardFallback(reason: .noEditableTarget))

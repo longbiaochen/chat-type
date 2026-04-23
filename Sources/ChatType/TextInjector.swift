@@ -155,7 +155,8 @@ final class TextInjector: TextInjecting {
         accessibilityTrusted: Bool,
         editableTextSnapshot: EditableTextSnapshot?,
         fallbackEditableTextSnapshot: EditableTextSnapshot?,
-        hasEditableTextFocus: Bool
+        hasEditableTextFocus: Bool,
+        hasFallbackEditableTextFocus: Bool
     ) -> TextInsertionPlan {
         guard accessibilityTrusted else {
             return .clipboardFallback(reason: .accessibilityPermissionRequired)
@@ -173,7 +174,7 @@ final class TextInjector: TextInjecting {
             return .directInsert(mutation)
         }
 
-        guard hasEditableTextFocus else {
+        guard hasEditableTextFocus || hasFallbackEditableTextFocus else {
             return .clipboardFallback(reason: .noEditableTarget)
         }
 
@@ -214,16 +215,20 @@ final class TextInjector: TextInjecting {
         let hasEditableTextFocus = accessibilityTrusted && (
             editableTextTarget != nil || FocusedElementInspector.hasEditableTextFocus()
         )
+        let hasFallbackEditableTextFocus = accessibilityTrusted && (
+            fallbackTarget != nil || FocusedElementInspector.hasEditableTextFocus(in: launchAppContext)
+        )
         let plan = Self.injectionPlan(
             text: text,
             accessibilityTrusted: accessibilityTrusted,
             editableTextSnapshot: editableTextTarget?.snapshot,
             fallbackEditableTextSnapshot: fallbackTarget?.snapshot,
-            hasEditableTextFocus: hasEditableTextFocus
+            hasEditableTextFocus: hasEditableTextFocus,
+            hasFallbackEditableTextFocus: hasFallbackEditableTextFocus
         )
 
         logger.info(
-            "Injection plan resolved to \(String(describing: plan), privacy: .public); currentEditableTarget=\(editableTextTarget != nil, privacy: .public); fallbackEditableTarget=\(fallbackTarget != nil, privacy: .public); currentEditableFocus=\(hasEditableTextFocus, privacy: .public)"
+            "Injection plan resolved to \(String(describing: plan), privacy: .public); currentEditableTarget=\(editableTextTarget != nil, privacy: .public); fallbackEditableTarget=\(fallbackTarget != nil, privacy: .public); currentEditableFocus=\(hasEditableTextFocus, privacy: .public); fallbackEditableFocus=\(hasFallbackEditableTextFocus, privacy: .public)"
         )
 
         switch plan {
@@ -233,10 +238,12 @@ final class TextInjector: TextInjecting {
         case .directInsert(let mutation):
             if let editableTextTarget,
                FocusedElementInspector.apply(mutation: mutation, to: editableTextTarget) {
+                copyToPasteboardIfNeeded(text, preserveClipboard: preserveClipboard)
                 return .pasted
             }
             if let fallbackTarget,
                FocusedElementInspector.apply(mutation: mutation, to: fallbackTarget) {
+                copyToPasteboardIfNeeded(text, preserveClipboard: preserveClipboard)
                 return .pasted
             }
             return try pasteUsingClipboard(
@@ -312,6 +319,14 @@ final class TextInjector: TextInjecting {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+    }
+
+    private func copyToPasteboardIfNeeded(_ text: String, preserveClipboard: Bool) {
+        guard !preserveClipboard else {
+            return
+        }
+
+        copyToPasteboard(text)
     }
 }
 

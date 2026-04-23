@@ -275,14 +275,14 @@ final class OverlayController: OverlayControlling {
 
         leadingBadgeView.translatesAutoresizingMaskIntoConstraints = false
         leadingBadgeView.wantsLayer = true
-        leadingBadgeView.layer?.cornerRadius = 18
+        leadingBadgeView.layer?.cornerRadius = 14
         leadingBadgeView.layer?.borderWidth = 1
         leadingBadgeView.isHidden = true
 
         waveformView.translatesAutoresizingMaskIntoConstraints = false
 
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.symbolConfiguration = .init(pointSize: 16, weight: .bold)
+        iconView.symbolConfiguration = .init(pointSize: 15, weight: .bold)
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.isHidden = true
 
@@ -315,7 +315,7 @@ final class OverlayController: OverlayControlling {
         closeButton.isBordered = false
         closeButton.bezelStyle = .regularSquare
         closeButton.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Cancel dictation")
-        closeButton.symbolConfiguration = .init(pointSize: 13, weight: .regular)
+        closeButton.symbolConfiguration = .init(pointSize: 12, weight: .regular)
         closeButton.imagePosition = .imageOnly
         closeButton.contentTintColor = ChatTypePalette.mistMuted.withAlphaComponent(0.78)
         closeButton.target = self
@@ -356,8 +356,8 @@ final class OverlayController: OverlayControlling {
 
             leadingBadgeView.centerXAnchor.constraint(equalTo: leadingContainer.centerXAnchor),
             leadingBadgeView.centerYAnchor.constraint(equalTo: leadingContainer.centerYAnchor),
-            leadingBadgeView.widthAnchor.constraint(equalToConstant: 54),
-            leadingBadgeView.heightAnchor.constraint(equalToConstant: 30),
+            leadingBadgeView.widthAnchor.constraint(equalToConstant: 48),
+            leadingBadgeView.heightAnchor.constraint(equalToConstant: 28),
 
             iconView.centerXAnchor.constraint(equalTo: leadingBadgeView.centerXAnchor),
             iconView.centerYAnchor.constraint(equalTo: leadingBadgeView.centerYAnchor),
@@ -383,11 +383,30 @@ final class OverlayController: OverlayControlling {
     private func positionPanel(size: NSSize) {
         let screen = activeScreen() ?? NSScreen.main
         let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let origin = NSPoint(
-            x: visibleFrame.midX - (size.width / 2),
-            y: visibleFrame.minY + 116
+        panel.setFrame(
+            Self.panelFrame(
+                for: size,
+                in: visibleFrame,
+                bottomInset: style.bottomInset
+            ),
+            display: false
         )
-        panel.setFrame(NSRect(origin: origin, size: size), display: false)
+    }
+
+    static func panelFrame(
+        for size: NSSize,
+        in visibleFrame: NSRect,
+        bottomInset: CGFloat
+    ) -> NSRect {
+        let fittedSize = NSSize(
+            width: min(size.width, visibleFrame.width),
+            height: min(size.height, visibleFrame.height)
+        )
+        let origin = NSPoint(
+            x: visibleFrame.midX - (fittedSize.width / 2),
+            y: min(visibleFrame.maxY - fittedSize.height, visibleFrame.minY + bottomInset)
+        )
+        return NSRect(origin: origin, size: fittedSize)
     }
 
     private func activeScreen() -> NSScreen? {
