@@ -7,7 +7,7 @@ This file tracks public promotion without storing private account data, cookies,
 - Landing page: https://longbiaochen.github.io/chat-type/
 - GitHub: https://github.com/longbiaochen/chat-type
 - Release: https://github.com/longbiaochen/chat-type/releases/tag/v0.1.2
-- Sponsors: https://github.com/sponsors/longbiaochen
+- Support path: GitHub Sponsors preferred, pending account enablement.
 
 ## Publishing Queue
 

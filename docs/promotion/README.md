@@ -24,7 +24,7 @@ Do not describe the default route as a stable public API. ChatType v1 depends on
    - Submit free or low-cost AI/tool directories first.
    - Defer paid listings such as TAAFT, Futurepedia, and Toolify until Chinese/V2EX response proves real interest.
 5. Support path
-   - Use GitHub Sponsors first for open-source support.
+   - GitHub Sponsors is the preferred open-source support path, but do not link it publicly until the account sponsor page is enabled.
    - Add Buy Me a Coffee, Afdian, or Open Collective only when those pages are actually created.
 
 ## Assets To Prepare

@@ -100,7 +100,7 @@ This repo does not yet publish a dedicated Homebrew tap, but the cask file is ke
 
 ## Support Development
 
-If `ChatType` saves you time, you can support continued maintenance through [GitHub Sponsors](https://github.com/sponsors/longbiaochen). Sponsorship is optional and does not change the open-source license or the free release path.
+The preferred support path is GitHub Sponsors, but the public sponsor page is not enabled for this account yet. Until that page is live, the best support is to try the release, star the repo, and open issues with setup blockers or workflow feedback.
 
 ## TypeWhisper Terminology Import
 

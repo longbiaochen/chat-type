@@ -99,7 +99,7 @@ packaging/homebrew/Casks/chattype.rb
 
 ## 支持继续维护
 
-如果 `ChatType` 确实节省了你的输入时间，可以通过 [GitHub Sponsors](https://github.com/sponsors/longbiaochen) 支持后续维护。赞助是可选的，不改变开源许可，也不改变免费 release 路径。
+首选支持入口是 GitHub Sponsors，但这个账号的公开 sponsor 页面还没有启用。在入口正式可用前，最有效的支持是试用 release、给仓库 star，并用 issue 反馈安装阻塞或工作流问题。
 
 ## TypeWhisper 术语导入
 
