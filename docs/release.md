@@ -43,11 +43,20 @@
    - mount `dist/ChatType-0.5.1-macos-arm64.dmg`
    - install the mounted `ChatType.app` to `/Applications/ChatType.app`
    - launch `/Applications/ChatType.app`
-10. If you are announcing the release on X, preview the outgoing post first and send it through the official Chrome plugin using the signed-in X web app or default Chrome profile.
+10. Update GitHub-facing documentation for the same version before publishing the release:
+   - update `README.md` and `README.zh-CN.md`
+   - update `CHANGELOG.md`
+   - add or update `docs/releases/vX.Y.Z.md`
+   - confirm the GitHub release notes match the packaged version and default product path
+11. Update the GitHub Pages landing page for the same version before announcing the release:
+   - update `docs/index.html`
+   - confirm the primary download link points at the new GitHub Release tag
+   - keep the landing page value proposition aligned with the current README and release notes
+12. If you are announcing the release on X, preview the outgoing post first and send it through the official Chrome plugin using the signed-in X web app or default Chrome profile.
    - create the post in one composer session
    - click `Post` once
    - treat the post as complete only after opening the profile and finding the new post text plus a fresh `/status/` URL
-11. Update docs if any onboarding, naming, packaging, or launch assumptions changed.
+13. Update any additional docs if onboarding, naming, packaging, launch assumptions, or live verification surfaces changed.
 
 ## Public Promotion Checklist
 
@@ -55,7 +64,7 @@ Use `docs/promotion/README.md` as the source of truth for low-cost public promot
 
 Before posting to public channels:
 
-1. Confirm the landing page, README, and release page describe the same default path: local Codex/ChatGPT Desktop login, `F5` recording, transcription, safe paste, and clipboard fallback.
+1. Confirm the GitHub README, GitHub release page, and GitHub Pages landing page describe the same default path: local ChatType-owned ChatGPT login, `F5` recording, transcription, optional AI Polish, safe paste, and clipboard fallback.
 2. Keep the private backend dependency explicit. Do not describe the default route as a stable public API.
 3. Publish Chinese social content first, then V2EX, then Hacker News or Product Hunt only after real install feedback exists.
 4. Do not ask for upvotes on Hacker News or Product Hunt.

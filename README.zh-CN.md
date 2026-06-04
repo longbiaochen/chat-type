@@ -115,9 +115,11 @@ packaging/homebrew/Casks/chattype.rb
 
 ## AI 文本润色
 
-`v0.5.0` 新增可选的 ASR 后文本润色引擎，主要面向长段口述给 agent 的场景：去掉口头禅，按后文修正后的意图为准，保留术语大小写，并在长输入时整理成更像计划的分点输出。
+`v0.5.x` 新增可选的 ASR 后文本润色引擎，主要面向长段口述给 agent 的场景：去掉口头禅，按后文修正后的意图为准，保留术语大小写，并在长输入时整理成更像计划的分点输出。
 
 润色路径和 ASR 分开，但只使用 ChatType 自己维护的 ChatGPT 登录态。设置页会展示可检查的 ChatGPT backend Responses endpoint 和模型；不再保存或调用 DeepSeek、Kimi、OpenAI、自定义 provider 的文本润色 key。
+
+`v0.5.1` 修复了 AI Polish 与当前 ChatGPT/Codex Responses 私有入口请求格式不匹配的问题，并让设置页显示润色尝试、成功和失败次数，不再把后端失败隐藏起来。
 
 ## 高级恢复路径
 
@@ -146,14 +148,7 @@ swift test --package-path .
 ./scripts/benchmark_stt.sh ~/bench/3s.wav ~/bench/10s.wav ~/bench/30s.wav
 ```
 
-如果你要发 X，现在走 `chrome-use` 和受管的 Chrome for Testing 会话：
-
-```bash
-scripts/post_x.sh --print "ChatType update"
-scripts/post_x.sh "ChatType update"
-```
-
-真正发送时会在同一个 Chrome for Testing 会话里完成发布和帖子页面验证。如果那个受管浏览器里还没登录 X，需要先在那里登录。
+如果你要发 X，现在走官方 Chrome plugin，使用已登录的 X web app 或默认 Chrome profile。只有打开 profile 并看到新帖文本和新的 `/status/` URL 后，才算发布完成。
 
 ## 配置
 

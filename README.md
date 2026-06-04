@@ -116,9 +116,11 @@ The preferred support path is GitHub Sponsors, but the public sponsor page is no
 
 ## AI Text Polish
 
-`v0.5.0` adds an optional post-ASR rewrite engine for long dictation. It is designed for agent-facing prompts: remove filler words, keep later corrections as the final intent, preserve glossary casing, and turn long speech into concise plan-like bullets when useful.
+`v0.5.x` adds an optional post-ASR rewrite engine for long dictation. It is designed for agent-facing prompts: remove filler words, keep later corrections as the final intent, preserve glossary casing, and turn long speech into concise plan-like bullets when useful.
 
 The polish path is intentionally separate from ASR but uses the same ChatType-managed ChatGPT login. Settings exposes the ChatGPT backend Responses endpoint and model for inspection, but no DeepSeek, Kimi, OpenAI, or custom polish API key is stored or used.
+
+`v0.5.1` fixes the AI Polish request shape for the current ChatGPT-backed Codex Responses endpoint and makes Settings show polish attempts, successes, and failures instead of hiding backend failures.
 
 ## Advanced Recovery Route
 
@@ -147,14 +149,7 @@ Benchmark the real packaged path with your own sample audio:
 ./scripts/benchmark_stt.sh ~/bench/3s.wav ~/bench/10s.wav ~/bench/30s.wav
 ```
 
-Post a release update to X through `chrome-use` and the managed Chrome for Testing session:
-
-```bash
-scripts/post_x.sh --print "ChatType update"
-scripts/post_x.sh "ChatType update"
-```
-
-The actual send path now uses the same Chrome for Testing browser session for publish and post-page verification. If X is not signed in there yet, sign in inside that managed browser session first.
+Post a release update to X through the official Chrome plugin using the signed-in X web app or default Chrome profile. Treat it as complete only after opening the profile and finding the new post text plus a fresh `/status/` URL.
 
 ## Config
 
