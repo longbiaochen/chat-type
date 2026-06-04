@@ -4,18 +4,34 @@ import Testing
 
 private final class RequestCapture: @unchecked Sendable {
     private let lock = NSLock()
+    private(set) var requestURLs: [String] = []
     private(set) var requestBodies: [String] = []
+    private(set) var authorizationHeaders: [String] = []
 
-    func append(_ body: String) {
+    func append(_ request: URLRequest, body: String, authorizationHeader: String? = nil) {
         lock.lock()
+        requestURLs.append(request.url?.absoluteString ?? "")
         requestBodies.append(body)
+        authorizationHeaders.append(authorizationHeader ?? "")
         lock.unlock()
+    }
+
+    func urls() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requestURLs
     }
 
     func bodies() -> [String] {
         lock.lock()
         defer { lock.unlock() }
         return requestBodies
+    }
+
+    func authorizations() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return authorizationHeaders
     }
 }
 
@@ -41,15 +57,16 @@ private func makeAudioFixture(named name: String = UUID().uuidString) throws -> 
 func openAICompatibleRouteIncludesPromptField() async throws {
     var config = AppConfig().transcription
     config.provider = .openAICompatible
+    config.openAIAuthTokenEnv = "CHATTYPE_TEST_OPENAI_KEY"
     config.hintTerms = ["budget v2.xlsx", "ChatType"]
 
     let capture = RequestCapture()
     let transcriber = ChatGPTTranscriber(
-        authClient: CodexAuthClient(),
+        authManager: FakeChatGPTAuthManager(),
         config: config,
         dataLoader: { request in
             let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
-            capture.append(body)
+            capture.append(request, body: body)
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: 200,
@@ -80,29 +97,22 @@ func openAICompatibleRouteIncludesPromptField() async throws {
 }
 
 @Test
-func codexBridgeFallsBackWhenPromptFieldIsRejected() async throws {
+func managedAuthFallsBackWhenPromptFieldIsRejected() async throws {
     var config = AppConfig().transcription
-    config.provider = .codexChatGPTBridge
+    config.provider = .chatGPTManagedAuth
     config.hintTerms = ["ChatType"]
 
     let capture = RequestCapture()
     let capability = BridgePromptCapabilityStore()
-    let authClient = CodexAuthClient(
-        cache: AuthStatusCache(ttl: 600),
-        liveFetch: { _, _ in
-            AuthStatus(authMethod: "chatgpt", authToken: "desktop-token")
-        }
-    )
-
+    let authManager = FakeChatGPTAuthManager()
     let attempts = AttemptCounter()
     let transcriber = ChatGPTTranscriber(
-        authClient: authClient,
+        authManager: authManager,
         config: config,
         bridgePromptCapability: capability,
         dataLoader: { request in
             let attempt = attempts.next()
-            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
-            capture.append(body)
+            capture.append(request, body: String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "")
 
             if attempt == 1 {
                 let response = HTTPURLResponse(
@@ -132,4 +142,146 @@ func codexBridgeFallsBackWhenPromptFieldIsRejected() async throws {
     #expect(capture.bodies().count == 2)
     #expect(capture.bodies()[0].contains("name=\"prompt\""))
     #expect(capture.bodies()[1].contains("name=\"prompt\"") == false)
+}
+
+@Test
+func managedAuthRefreshesAccessTokenAfterForbidden() async throws {
+    var config = AppConfig().transcription
+    config.provider = .chatGPTManagedAuth
+
+    let capture = RequestCapture()
+    let authManager = FakeChatGPTAuthManager(
+        bestTokens: [.success("stale-token")],
+        refreshTokens: [.success("fresh-token")]
+    )
+    let attempts = AttemptCounter()
+    let transcriber = ChatGPTTranscriber(
+        authManager: authManager,
+        config: config,
+        bridgePromptCapability: BridgePromptCapabilityStore(),
+        dataLoader: { request in
+            let attempt = attempts.next()
+            capture.append(
+                request,
+                body: String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "",
+                authorizationHeader: request.value(forHTTPHeaderField: "Authorization")
+            )
+
+            if attempt == 1 {
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 403,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return (Data(#"{"message":"forbidden"}"#.utf8), response)
+            }
+
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (Data(#"{"text":"refreshed transcript"}"#.utf8), response)
+        }
+    )
+
+    let audio = try makeAudioFixture()
+    let result = try await transcriber.transcribe(audio)
+
+    #expect(result.text == "refreshed transcript")
+    #expect(capture.authorizations() == ["Bearer stale-token", "Bearer fresh-token"])
+}
+
+@Test
+func managedAuthReportsRetryableErrorAfterThreeCloudflareChallenges() async throws {
+    var config = AppConfig().transcription
+    config.provider = .chatGPTManagedAuth
+    config.hintTerms = ["ChatType"]
+    config.openAIAuthTokenEnv = "CHATTYPE_TEST_MISSING_RECOVERY_KEY"
+    unsetenv(config.openAIAuthTokenEnv)
+
+    let capture = RequestCapture()
+    let authManager = FakeChatGPTAuthManager()
+    let transcriber = ChatGPTTranscriber(
+        authManager: authManager,
+        config: config,
+        bridgePromptCapability: BridgePromptCapabilityStore(),
+        dataLoader: { request in
+            capture.append(
+                request,
+                body: String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "",
+                authorizationHeader: request.value(forHTTPHeaderField: "Authorization")
+            )
+
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 403,
+                httpVersion: nil,
+                headerFields: [
+                    "Content-Type": "text/html; charset=UTF-8",
+                    "Server": "cloudflare",
+                ]
+            )!
+            return (Data(#"<html><body>Just a moment...</body></html>"#.utf8), response)
+        }
+    )
+
+    let audio = try makeAudioFixture()
+    var caughtError: Error?
+    do {
+        _ = try await transcriber.transcribe(audio)
+    } catch {
+        caughtError = error
+    }
+
+    #expect(caughtError?.localizedDescription.contains("Cloudflare 403") == true)
+    #expect(capture.bodies().count == 3)
+    #expect(capture.authorizations() == ["Bearer desktop-token", "Bearer desktop-token", "Bearer desktop-token"])
+}
+
+@Test
+func managedAuthManualRetryPolicyAttemptsCloudflareChallengeOnlyOnce() async throws {
+    var config = AppConfig().transcription
+    config.provider = .chatGPTManagedAuth
+    config.hintTerms = ["ChatType"]
+
+    let capture = RequestCapture()
+    let transcriber = ChatGPTTranscriber(
+        authManager: FakeChatGPTAuthManager(),
+        config: config,
+        bridgePromptCapability: BridgePromptCapabilityStore(),
+        cloudflareChallengeMaxAttempts: 1,
+        dataLoader: { request in
+            capture.append(
+                request,
+                body: String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "",
+                authorizationHeader: request.value(forHTTPHeaderField: "Authorization")
+            )
+
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 403,
+                httpVersion: nil,
+                headerFields: [
+                    "Content-Type": "text/html; charset=UTF-8",
+                    "Server": "cloudflare",
+                ]
+            )!
+            return (Data(#"<html><body>Just a moment...</body></html>"#.utf8), response)
+        }
+    )
+
+    let audio = try makeAudioFixture()
+    var caughtError: Error?
+    do {
+        _ = try await transcriber.transcribe(audio)
+    } catch {
+        caughtError = error
+    }
+
+    #expect(caughtError?.localizedDescription.contains("403") == true)
+    #expect(capture.urls() == [config.chatGPTURL])
+    #expect(capture.authorizations() == ["Bearer desktop-token"])
 }

@@ -211,13 +211,14 @@ final class AudioRecorder: RecordingControlling {
             throw RecorderError.noActiveRecording
         }
 
+        let durationMs = Int((recorder.currentTime * 1000).rounded())
         recorder.stop()
         self.recorder = nil
         self.fileURL = nil
 
         return RecordedAudio(
             fileURL: fileURL,
-            durationMs: Int((recorder.currentTime * 1000).rounded())
+            durationMs: durationMs
         )
     }
 

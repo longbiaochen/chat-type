@@ -14,19 +14,7 @@ struct EditableTextSnapshot: Sendable, Equatable {
     }
 }
 
-struct DirectTextMutation: Sendable, Equatable {
-    let updatedValue: String
-    let updatedSelectedRange: CFRange
-
-    static func == (lhs: DirectTextMutation, rhs: DirectTextMutation) -> Bool {
-        lhs.updatedValue == rhs.updatedValue &&
-            lhs.updatedSelectedRange.location == rhs.updatedSelectedRange.location &&
-            lhs.updatedSelectedRange.length == rhs.updatedSelectedRange.length
-    }
-}
-
 enum TextInsertionPlan: Sendable, Equatable {
-    case directInsert(DirectTextMutation)
     case keyPressPaste
     case clipboardFallback(reason: ClipboardFallbackReason)
 }
@@ -119,85 +107,25 @@ final class TextInjector: TextInjecting {
         return .pasted
     }
 
-    nonisolated static func directInsertionMutation(
-        text: String,
-        snapshot: EditableTextSnapshot
-    ) -> DirectTextMutation? {
-        let currentValue = snapshot.value as NSString
-        let selectedRange = snapshot.selectedRange
-        let upperBound = selectedRange.location + selectedRange.length
-
-        guard
-            selectedRange.location >= 0,
-            selectedRange.length >= 0,
-            selectedRange.location <= currentValue.length,
-            upperBound <= currentValue.length
-        else {
-            return nil
-        }
-
-        let updatedValue = currentValue.replacingCharacters(
-            in: NSRange(location: selectedRange.location, length: selectedRange.length),
-            with: text
-        )
-        let insertedLength = (text as NSString).length
-        return DirectTextMutation(
-            updatedValue: updatedValue,
-            updatedSelectedRange: CFRange(
-                location: selectedRange.location + insertedLength,
-                length: 0
-            )
-        )
-    }
-
     nonisolated static func injectionPlan(
-        text: String,
+        text _: String,
         accessibilityTrusted: Bool,
-        editableTextSnapshot: EditableTextSnapshot?,
-        fallbackEditableTextSnapshot: EditableTextSnapshot?,
+        editableTextSnapshot _: EditableTextSnapshot?,
+        fallbackEditableTextSnapshot _: EditableTextSnapshot?,
         hasEditableTextFocus: Bool,
-        hasFallbackEditableTextFocus: Bool
+        hasFallbackEditableTextFocus: Bool,
+        hasLaunchAppContext: Bool = false
     ) -> TextInsertionPlan {
         guard accessibilityTrusted else {
             return .clipboardFallback(reason: .accessibilityPermissionRequired)
         }
 
-        if let editableTextSnapshot,
-           !isPlaceholderOnlySnapshot(editableTextSnapshot),
-           let mutation = directInsertionMutation(text: text, snapshot: editableTextSnapshot) {
-            return .directInsert(mutation)
-        }
-
-        if let fallbackEditableTextSnapshot,
-           !isPlaceholderOnlySnapshot(fallbackEditableTextSnapshot),
-           let mutation = directInsertionMutation(text: text, snapshot: fallbackEditableTextSnapshot) {
-            return .directInsert(mutation)
-        }
-
-        guard hasEditableTextFocus || hasFallbackEditableTextFocus else {
+        guard hasEditableTextFocus || hasFallbackEditableTextFocus || hasLaunchAppContext else {
             return .clipboardFallback(reason: .noEditableTarget)
         }
 
         return .keyPressPaste
     }
-
-    private nonisolated static func isPlaceholderOnlySnapshot(_ snapshot: EditableTextSnapshot) -> Bool {
-        let normalizedValue = snapshot.value
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-
-        guard Self.knownPlaceholderValues.contains(normalizedValue) else {
-            return false
-        }
-
-        return snapshot.selectedRange.length == 0
-    }
-
-    private nonisolated static let knownPlaceholderValues: Set<String> = [
-        "ask for follow-up changes",
-        "ask codex anything. @ to use plugins or use files",
-        "ask codex anything, @ add files, / for commands, $ for skills",
-    ]
 
     func inject(
         text: String,
@@ -210,48 +138,27 @@ final class TextInjector: TextInjecting {
             AccessibilityPermission.requestTrustIfNeeded()
         }
 
-        let editableTextTarget = accessibilityTrusted ? FocusedElementInspector.editableTextTarget() : nil
-        let fallbackTarget = accessibilityTrusted ? FocusedElementInspector.editableTextTarget(in: launchAppContext) : nil
-        let hasEditableTextFocus = accessibilityTrusted && (
-            editableTextTarget != nil || FocusedElementInspector.hasEditableTextFocus()
-        )
-        let hasFallbackEditableTextFocus = accessibilityTrusted && (
-            fallbackTarget != nil || FocusedElementInspector.hasEditableTextFocus(in: launchAppContext)
-        )
+        let hasEditableTextFocus = accessibilityTrusted && FocusedElementInspector.hasEditableTextFocus()
+        let hasFallbackEditableTextFocus = accessibilityTrusted &&
+            FocusedElementInspector.hasEditableTextFocus(in: launchAppContext)
         let plan = Self.injectionPlan(
             text: text,
             accessibilityTrusted: accessibilityTrusted,
-            editableTextSnapshot: editableTextTarget?.snapshot,
-            fallbackEditableTextSnapshot: fallbackTarget?.snapshot,
+            editableTextSnapshot: nil,
+            fallbackEditableTextSnapshot: nil,
             hasEditableTextFocus: hasEditableTextFocus,
-            hasFallbackEditableTextFocus: hasFallbackEditableTextFocus
+            hasFallbackEditableTextFocus: hasFallbackEditableTextFocus,
+            hasLaunchAppContext: launchAppContext != nil
         )
 
         logger.info(
-            "Injection plan resolved to \(String(describing: plan), privacy: .public); currentEditableTarget=\(editableTextTarget != nil, privacy: .public); fallbackEditableTarget=\(fallbackTarget != nil, privacy: .public); currentEditableFocus=\(hasEditableTextFocus, privacy: .public); fallbackEditableFocus=\(hasFallbackEditableTextFocus, privacy: .public)"
+            "Injection plan resolved to \(String(describing: plan), privacy: .public); currentEditableFocus=\(hasEditableTextFocus, privacy: .public); fallbackEditableFocus=\(hasFallbackEditableTextFocus, privacy: .public); hasLaunchAppContext=\(launchAppContext != nil, privacy: .public)"
         )
 
         switch plan {
         case .clipboardFallback(let reason):
             copyToPasteboard(text)
             return .copiedToClipboard(reason: reason)
-        case .directInsert(let mutation):
-            if let editableTextTarget,
-               FocusedElementInspector.apply(mutation: mutation, to: editableTextTarget) {
-                copyToPasteboardIfNeeded(text, preserveClipboard: preserveClipboard)
-                return .pasted
-            }
-            if let fallbackTarget,
-               FocusedElementInspector.apply(mutation: mutation, to: fallbackTarget) {
-                copyToPasteboardIfNeeded(text, preserveClipboard: preserveClipboard)
-                return .pasted
-            }
-            return try pasteUsingClipboard(
-                text: text,
-                preserveClipboard: preserveClipboard,
-                restoreDelayMilliseconds: restoreDelayMilliseconds,
-                launchAppContext: launchAppContext
-            )
         case .keyPressPaste:
             return try pasteUsingClipboard(
                 text: text,
@@ -272,7 +179,14 @@ final class TextInjector: TextInjecting {
         let snapshot = preserveClipboard ? PasteboardSnapshot.capture(from: pasteboard) : nil
 
         restoreLaunchAppIfNeeded(launchAppContext)
+        guard waitForPasteTarget(launchAppContext: launchAppContext) else {
+            logger.error("Paste target did not become frontmost before timeout; leaving transcript in clipboard")
+            copyToPasteboard(text)
+            return .copiedToClipboard(reason: .noEditableTarget)
+        }
+
         copyToPasteboard(text)
+        usleep(60_000)
 
         guard
             let source = CGEventSource(stateID: .hidSystemState),
@@ -297,6 +211,34 @@ final class TextInjector: TextInjecting {
         return .pasted
     }
 
+    private func waitForPasteTarget(launchAppContext: LaunchAppContext?) -> Bool {
+        let deadline = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
+        while DispatchTime.now().uptimeNanoseconds < deadline {
+            if isPasteTargetReady(launchAppContext: launchAppContext) {
+                return true
+            }
+            restoreLaunchAppIfNeeded(launchAppContext)
+            usleep(25_000)
+        }
+
+        return isPasteTargetReady(launchAppContext: launchAppContext)
+    }
+
+    private func isPasteTargetReady(launchAppContext: LaunchAppContext?) -> Bool {
+        guard let launchAppContext else {
+            return FocusedElementInspector.hasEditableTextFocus()
+        }
+
+        guard
+            let frontmostApplication = NSWorkspace.shared.frontmostApplication,
+            frontmostApplication.processIdentifier == launchAppContext.processIdentifier
+        else {
+            return false
+        }
+
+        return true
+    }
+
     private func restoreLaunchAppIfNeeded(_ launchAppContext: LaunchAppContext?) {
         guard
             let launchAppContext,
@@ -319,14 +261,6 @@ final class TextInjector: TextInjecting {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-    }
-
-    private func copyToPasteboardIfNeeded(_ text: String, preserveClipboard: Bool) {
-        guard !preserveClipboard else {
-            return
-        }
-
-        copyToPasteboard(text)
     }
 }
 

@@ -2,7 +2,7 @@
 
 ## Summary
 
-`ChatType` is a native macOS voice input tool for office users who already pay for ChatGPT and already run a local Codex desktop session. The core promise is simple: install once, no API key, no local model setup, press `F5`, speak, get text back.
+`ChatType` is a native macOS voice input tool for office users who already pay for ChatGPT. The core promise is simple: install once, connect ChatGPT through the default browser, no API key, no local model setup, press `F5`, speak, get text back.
 
 ## Product Comparison Matrix
 
@@ -14,7 +14,7 @@
 | Superwhisper | hybrid local/cloud | medium | subscription or BYOK | yes | no | still a model/config product |
 | TapWisper | BYO provider | medium | provider spend | yes | no | still needs provider setup |
 | VoiceCommand | local STT + cloud command | medium | provider spend | yes | no | still needs keys and cloud selection |
-| **ChatType** | **local login-state bridge to ChatGPT backend** | **very low** | **no extra app subscription** | **yes** | **yes** | **private backend dependency and host-app dependency** |
+| **ChatType** | **ChatType-managed ChatGPT session to ChatGPT backend** | **very low** | **no extra app subscription** | **yes** | **yes** | **private backend dependency** |
 
 ## Product Positioning
 
@@ -39,8 +39,8 @@
 ### Included
 
 - native macOS menu bar app
-- zero-config default route through local signed-in Codex desktop login state
-- setup checks for host login, microphone, and Accessibility
+- zero-config default route through ChatType-owned ChatGPT login state
+- setup checks for ChatGPT login, microphone, and Accessibility
 - safe paste into editable targets
 - clipboard fallback otherwise
 - GitHub release zip plus Homebrew Cask metadata
@@ -60,7 +60,7 @@
 
 ## Key Risks
 
-- V1 depends on a private backend path and local desktop login-state behavior.
+- V1 depends on a private backend path and local ChatGPT Web session behavior.
 - Upstream changes can break transcription without any public API compatibility guarantee.
 - The product must be honest about this dependency in UI and docs.
 

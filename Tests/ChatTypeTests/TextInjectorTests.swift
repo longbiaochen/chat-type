@@ -65,47 +65,7 @@ func injectionPastesWhenEditableFocusAndAccessibilityPermissionAreAvailable() {
 }
 
 @Test
-func directInsertionMutationInsertsTranscriptAtCaretLocation() {
-    let snapshot = EditableTextSnapshot(
-        value: "hello world",
-        selectedRange: CFRange(location: 6, length: 0)
-    )
-
-    let mutation = TextInjector.directInsertionMutation(
-        text: "ChatType ",
-        snapshot: snapshot
-    )
-
-    #expect(
-        mutation == DirectTextMutation(
-            updatedValue: "hello ChatType world",
-            updatedSelectedRange: CFRange(location: 15, length: 0)
-        )
-    )
-}
-
-@Test
-func directInsertionMutationReplacesSelectedText() {
-    let snapshot = EditableTextSnapshot(
-        value: "hello brave world",
-        selectedRange: CFRange(location: 6, length: 5)
-    )
-
-    let mutation = TextInjector.directInsertionMutation(
-        text: "ChatType",
-        snapshot: snapshot
-    )
-
-    #expect(
-        mutation == DirectTextMutation(
-            updatedValue: "hello ChatType world",
-            updatedSelectedRange: CFRange(location: 14, length: 0)
-        )
-    )
-}
-
-@Test
-func injectionPlanPrefersDirectInsertionWhenFocusedTextSnapshotIsAvailable() {
+func injectionPlanUsesNativePasteForPlainFocusedSnapshot() {
     let snapshot = EditableTextSnapshot(
         value: "hello world",
         selectedRange: CFRange(location: 6, length: 0)
@@ -120,14 +80,64 @@ func injectionPlanPrefersDirectInsertionWhenFocusedTextSnapshotIsAvailable() {
         hasFallbackEditableTextFocus: false
     )
 
-    #expect(
-        plan == .directInsert(
-            DirectTextMutation(
-                updatedValue: "hello ChatType world",
-                updatedSelectedRange: CFRange(location: 15, length: 0)
-            )
-        )
+    #expect(plan == .keyPressPaste)
+}
+
+@Test
+func injectionPlanUsesNativePasteForSelectedTextSnapshot() {
+    let snapshot = EditableTextSnapshot(
+        value: "hello brave world",
+        selectedRange: CFRange(location: 6, length: 5)
     )
+
+    let plan = TextInjector.injectionPlan(
+        text: "ChatType",
+        accessibilityTrusted: true,
+        editableTextSnapshot: snapshot,
+        fallbackEditableTextSnapshot: nil,
+        hasEditableTextFocus: true,
+        hasFallbackEditableTextFocus: false
+    )
+
+    #expect(plan == .keyPressPaste)
+}
+
+@Test
+func injectionPlanUsesNativePasteForExistingTextSnapshot() {
+    let snapshot = EditableTextSnapshot(
+        value: "已有的一段 Codex 输入\n第二行",
+        selectedRange: CFRange(location: 8, length: 0)
+    )
+
+    let plan = TextInjector.injectionPlan(
+        text: "ChatType",
+        accessibilityTrusted: true,
+        editableTextSnapshot: snapshot,
+        fallbackEditableTextSnapshot: nil,
+        hasEditableTextFocus: true,
+        hasFallbackEditableTextFocus: false
+    )
+
+    #expect(plan == .keyPressPaste)
+}
+
+@Test
+func injectionPlanUsesNativePasteForFallbackSnapshotWhenLaunchAppEditorHasFocus() {
+    let snapshot = EditableTextSnapshot(
+        value: "hello world",
+        selectedRange: CFRange(location: 11, length: 0)
+    )
+
+    let plan = TextInjector.injectionPlan(
+        text: "ChatType",
+        accessibilityTrusted: true,
+        editableTextSnapshot: nil,
+        fallbackEditableTextSnapshot: snapshot,
+        hasEditableTextFocus: false,
+        hasFallbackEditableTextFocus: true
+    )
+
+    #expect(plan == .keyPressPaste)
 }
 
 @Test
@@ -150,12 +160,66 @@ func injectionPlanUsesNativePasteWhenFocusedSnapshotIsOnlyCodexPlaceholder() {
 }
 
 @Test
+func injectionPlanUsesNativePasteForFeishuComposerAccessibilityWrapper() {
+    let snapshot = EditableTextSnapshot(
+        value: "发送给 项目部\n你们到时候写你的博士论文的时候,也是每个人都要有一个感知决策行动的闭环的。\u{200B}\n\u{200B}\n发送给 项目部\n\u{200B}\n\u{200B}\n\u{200B}",
+        selectedRange: CFRange(location: 57, length: 0)
+    )
+
+    let plan = TextInjector.injectionPlan(
+        text: "ChatType",
+        accessibilityTrusted: true,
+        editableTextSnapshot: snapshot,
+        fallbackEditableTextSnapshot: nil,
+        hasEditableTextFocus: true,
+        hasFallbackEditableTextFocus: false
+    )
+
+    #expect(plan == .keyPressPaste)
+}
+
+@Test
 func injectionPlanDoesNotPasteWhenOnlyLaunchAppContextExists() {
     let plan = TextInjector.injectionPlan(
         text: "ChatType",
         accessibilityTrusted: true,
         editableTextSnapshot: nil,
         fallbackEditableTextSnapshot: nil,
+        hasEditableTextFocus: false,
+        hasFallbackEditableTextFocus: false,
+        hasLaunchAppContext: false
+    )
+
+    #expect(plan == .clipboardFallback(reason: .noEditableTarget))
+}
+
+@Test
+func injectionPlanUsesNativePasteForLaunchAppEvenWhenAXFocusIsOpaque() {
+    let plan = TextInjector.injectionPlan(
+        text: "ChatType",
+        accessibilityTrusted: true,
+        editableTextSnapshot: nil,
+        fallbackEditableTextSnapshot: nil,
+        hasEditableTextFocus: false,
+        hasFallbackEditableTextFocus: false,
+        hasLaunchAppContext: true
+    )
+
+    #expect(plan == .keyPressPaste)
+}
+
+@Test
+func injectionPlanIgnoresStaleSnapshotsWithoutEditableFocusSignal() {
+    let snapshot = EditableTextSnapshot(
+        value: "stale editor text",
+        selectedRange: CFRange(location: 0, length: 0)
+    )
+
+    let plan = TextInjector.injectionPlan(
+        text: "ChatType",
+        accessibilityTrusted: true,
+        editableTextSnapshot: snapshot,
+        fallbackEditableTextSnapshot: snapshot,
         hasEditableTextFocus: false,
         hasFallbackEditableTextFocus: false
     )

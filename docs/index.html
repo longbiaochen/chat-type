@@ -138,7 +138,7 @@
 <body>
   <main>
     <section class="hero">
-      <div class="eyebrow">ChatType v0.1.2</div>
+      <div class="eyebrow">ChatType v0.5.1</div>
       <h1>按住 F5 说话，松开就把中文直接回填到当前输入框。</h1>
       <p class="lead">
         ChatType 是一个原生 macOS 听写工具，面向已经在这台 Mac 上登录 ChatGPT Desktop 的用户。
@@ -146,17 +146,17 @@
         <code>F5 -&gt; speak -&gt; paste</code> 这条链路做到足够快、足够稳。
       </p>
       <div class="actions">
-        <a class="primary" href="https://github.com/longbiaochen/chat-type/releases/tag/v0.1.2">下载 v0.1.2</a>
+        <a class="primary" href="https://github.com/longbiaochen/chat-type/releases/tag/v0.5.1">下载 v0.5.1</a>
         <a class="secondary" href="https://github.com/longbiaochen/chat-type">查看 GitHub 仓库</a>
       </div>
       <div class="grid">
         <div class="card">
           <h2>产品承诺</h2>
-          <p>不额外订阅，不默认要 API key，不额外跑第二轮 AI 清洗，结果优先直接可用。</p>
+          <p>默认 ASR 不要求 API key；长句润色也走 ChatGPT 登录态，不单独配置文本模型 key。</p>
         </div>
         <div class="card">
           <h2>这次更新</h2>
-          <p>支持从 TypeWhisper 手动导入术语表，并在 STT 之后做更强的本地术语对齐，不引入第二轮 AI 清洗。</p>
+          <p>新增 ASR 后 AI 文本润色：长段口述可整理成更适合 agent 执行的分点计划，并保留术语大小写。</p>
         </div>
         <div class="card">
           <h2>安装要求</h2>
@@ -168,7 +168,7 @@
       <h2>使用流程</h2>
       <ol>
         <li>下载并安装 <code>ChatType.app</code> 到 <code>/Applications/ChatType.app</code>。</li>
-        <li>确保这台 Mac 上已经安装并登录了 Codex Desktop / ChatGPT Desktop。</li>
+        <li>在 ChatType 设置里完成 ChatGPT 登录。</li>
         <li>首次运行时授予麦克风权限。</li>
         <li>如果你要自动回填到当前输入框，授予 Accessibility 权限。</li>
         <li>把光标放到 Notes、Mail、Slack、Codex 等可输入位置。</li>
@@ -184,11 +184,14 @@
       </ul>
     </section>
     <section class="section">
-      <h2>v0.1.2 Highlights</h2>
+      <h2>v0.5.1 Highlights</h2>
       <ul>
-        <li>设置页新增 <code>Import from TypeWhisper</code>，导入成功后持久化到 ChatType 自己的配置里。</li>
-        <li>术语对齐仍然是本地确定性后处理，不把产品路径改回第二次模型清洗。</li>
-        <li>默认 public path 仍然是本机已登录 Codex Desktop + <code>F5 -&gt; speak -&gt; paste</code>。</li>
+        <li>修复 AI Polish 请求格式与 ChatGPT/Codex 私有 Responses 入口不匹配的问题。</li>
+        <li>AI Polish 统计现在显示尝试、成功和失败次数，后端失败不会再被隐藏成普通 ASR。</li>
+        <li>设置页重构为工作流侧栏，覆盖 Account、Dictation、AI Polish、Terminology、Paste 和 Advanced。</li>
+        <li>AI Polish 与 ASR 分开配置，但只使用 ChatType 保存的 ChatGPT 登录态，不再要求文本润色 provider key。</li>
+        <li>术语对齐在 AI 润色前后各跑一次，提高口音和大小写漂移下的召回。</li>
+        <li>默认 public path 改为 ChatType 自己登录 ChatGPT + <code>F5 -&gt; speak -&gt; paste</code>。</li>
         <li>剪贴板默认保留最后一次转写结果，光标丢失时可以直接手动粘贴；安装路径仍然必须是 <code>/Applications/ChatType.app</code>。</li>
       </ul>
     </section>
@@ -200,7 +203,7 @@
       </p>
     </section>
     <footer>
-      ChatType 依赖本地桌面登录态和上游私有转写链路；它是面向个人使用效率的工具，不把这条集成表述成稳定公开 API。
+      ChatType 依赖自己保存的本地 ChatGPT 会话和上游私有转写链路；它是面向个人使用效率的工具，不把这条集成表述成稳定公开 API。
     </footer>
   </main>
 </body>

@@ -6,6 +6,7 @@ enum TranscriptionError: LocalizedError {
     case transcriptionFailed(String)
     case invalidResponse
     case missingAuthTokenEnv(String)
+    case retryableCloudflareChallenge(attempts: Int)
 
     var errorDescription: String? {
         switch self {
@@ -19,7 +20,52 @@ enum TranscriptionError: LocalizedError {
             return "ChatGPT 转写返回了空文本。"
         case .missingAuthTokenEnv(let envName):
             return "缺少转写 API key，请设置环境变量 \(envName)。"
+        case .retryableCloudflareChallenge(let attempts):
+            return "ChatGPT 转写连续 \(attempts) 次遇到 Cloudflare 403；这通常是网络波动，录音已保留，可以点击 Retry 再试一次。"
         }
+    }
+}
+
+private struct TranscriptionHTTPError: LocalizedError {
+    let providerLabel: String
+    let statusCode: Int
+    let message: String
+    let contentType: String?
+    let server: String?
+    let bodyPrefix: String?
+
+    var isAuthFailure: Bool {
+        statusCode == 401 || statusCode == 403
+    }
+
+    var shouldRefreshAuthToken: Bool {
+        isAuthFailure && !isCloudflareChallenge
+    }
+
+    var canRetryWithoutPrompt: Bool {
+        statusCode == 400 || statusCode == 422
+    }
+
+    var isCloudflareChallenge: Bool {
+        guard statusCode == 403 else {
+            return false
+        }
+
+        let lowerContentType = contentType?.lowercased() ?? ""
+        let lowerServer = server?.lowercased() ?? ""
+        let lowerBodyPrefix = bodyPrefix?.lowercased() ?? ""
+        return lowerServer.contains("cloudflare")
+            || lowerContentType.contains("text/html")
+            || lowerBodyPrefix.contains("<html")
+            || lowerBodyPrefix.contains("cloudflare")
+    }
+
+    var errorDescription: String? {
+        if isCloudflareChallenge {
+            return "\(providerLabel) 转写失败：私有转写接口返回 Cloudflare 403 challenge；这不是 ChatType 会话过期。"
+        }
+
+        return "\(providerLabel) 转写失败：\(message)"
     }
 }
 
@@ -57,25 +103,28 @@ final class BridgePromptCapabilityStore: @unchecked Sendable {
 }
 
 struct ChatGPTTranscriber: Sendable {
-    let authClient: CodexAuthClient
+    let authManager: any ChatGPTAuthProviding
     let config: TranscriptionConfig
     let promptBuilder: TranscriptionPromptBuilder
     let bridgePromptCapability: BridgePromptCapabilityStore
+    let cloudflareChallengeMaxAttempts: Int
     let dataLoader: @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
     init(
-        authClient: CodexAuthClient,
+        authManager: any ChatGPTAuthProviding,
         config: TranscriptionConfig,
         promptBuilder: TranscriptionPromptBuilder = .init(),
         bridgePromptCapability: BridgePromptCapabilityStore = .shared,
+        cloudflareChallengeMaxAttempts: Int = 3,
         dataLoader: @escaping @Sendable (URLRequest) async throws -> (Data, URLResponse) = { request in
             try await URLSession.shared.data(for: request)
         }
     ) {
-        self.authClient = authClient
+        self.authManager = authManager
         self.config = config
         self.promptBuilder = promptBuilder
         self.bridgePromptCapability = bridgePromptCapability
+        self.cloudflareChallengeMaxAttempts = max(1, cloudflareChallengeMaxAttempts)
         self.dataLoader = dataLoader
     }
 
@@ -88,27 +137,39 @@ struct ChatGPTTranscriber: Sendable {
             throw TranscriptionError.payloadTooLarge
         }
 
-        let prompt = promptBuilder.buildPrompt(hintTerms: config.hintTerms)
+        let prompt = promptBuilder.buildPrompt(
+            hintTerms: config.promptHintTerms,
+            speechCleanupEnabled: config.speechCleanupEnabled
+        )
 
         switch config.provider {
-        case .codexChatGPTBridge:
+        case .chatGPTManagedAuth:
             let authStarted = DispatchTime.now().uptimeNanoseconds
-            let authStatus = try authClient.fetchBestAvailableAuthStatus(includeToken: true)
-            let authMs = elapsedMilliseconds(since: authStarted)
-            guard let token = authStatus.authToken else {
-                throw CodexAuthError.missingToken
-            }
+            var token = try await authManager.bestAvailableAccessToken()
+            var authMs = elapsedMilliseconds(since: authStarted)
             let transcribeStarted = DispatchTime.now().uptimeNanoseconds
-            let response = try await transcribeViaChatGPTBridge(
-                audioData: data,
-                token: token,
-                prompt: prompt
-            )
+            let response: (text: String, promptIncluded: Bool)
+            do {
+                response = try await transcribeViaChatGPTBridgeWithCloudflareRetries(
+                    audioData: data,
+                    token: token,
+                    prompt: prompt
+                )
+            } catch let error as TranscriptionHTTPError where error.shouldRefreshAuthToken {
+                let refreshStarted = DispatchTime.now().uptimeNanoseconds
+                token = try await authManager.refreshAccessToken()
+                authMs += elapsedMilliseconds(since: refreshStarted)
+                response = try await transcribeViaChatGPTBridgeWithCloudflareRetries(
+                    audioData: data,
+                    token: token,
+                    prompt: prompt
+                )
+            }
             let transcribeMs = elapsedMilliseconds(since: transcribeStarted)
             return TranscriptionResult(
                 text: response.text,
                 metrics: TranscriptionMetrics(
-                    provider: .codexChatGPTBridge,
+                    provider: .chatGPTManagedAuth,
                     audioDurationMs: audio.durationMs,
                     audioBytes: data.count,
                     authMs: authMs,
@@ -135,6 +196,33 @@ struct ChatGPTTranscriber: Sendable {
                 )
             )
         }
+    }
+
+    private func transcribeViaChatGPTBridgeWithCloudflareRetries(
+        audioData: Data,
+        token: String,
+        prompt: String
+    ) async throws -> (text: String, promptIncluded: Bool) {
+        for attempt in 1...cloudflareChallengeMaxAttempts {
+            do {
+                return try await transcribeViaChatGPTBridge(
+                    audioData: audioData,
+                    token: token,
+                    prompt: prompt
+                )
+            } catch let error as TranscriptionHTTPError where error.isCloudflareChallenge {
+                if attempt == cloudflareChallengeMaxAttempts {
+                    throw TranscriptionError.retryableCloudflareChallenge(
+                        attempts: cloudflareChallengeMaxAttempts
+                    )
+                }
+                continue
+            }
+        }
+
+        throw TranscriptionError.retryableCloudflareChallenge(
+            attempts: cloudflareChallengeMaxAttempts
+        )
     }
 
     private func transcribeViaChatGPTBridge(
@@ -166,6 +254,10 @@ struct ChatGPTTranscriber: Sendable {
             )
             bridgePromptCapability.mark(true)
             return (text, true)
+        } catch let error as TranscriptionHTTPError where error.shouldRefreshAuthToken || error.isCloudflareChallenge {
+            throw error
+        } catch let error as TranscriptionHTTPError where !error.canRetryWithoutPrompt {
+            throw error
         } catch {
             let fallbackText = try await executeTranscriptionRequest(
                 makeChatGPTBridgeRequest(
@@ -199,8 +291,7 @@ struct ChatGPTTranscriber: Sendable {
     }
 
     private func transcribeViaOpenAICompatible(audioData: Data, prompt: String) async throws -> String {
-        let token = ProcessInfo.processInfo.environment[config.openAIAuthTokenEnv] ?? ""
-        guard !token.isEmpty else {
+        guard let token = openAICompatibleAuthToken() else {
             throw TranscriptionError.missingAuthTokenEnv(config.openAIAuthTokenEnv)
         }
 
@@ -221,6 +312,12 @@ struct ChatGPTTranscriber: Sendable {
         return try await executeTranscriptionRequest(request, providerLabel: "OpenAI-compatible")
     }
 
+    private func openAICompatibleAuthToken() -> String? {
+        let token = ProcessInfo.processInfo.environment[config.openAIAuthTokenEnv] ?? ""
+        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedToken.isEmpty ? nil : trimmedToken
+    }
+
     private func executeTranscriptionRequest(_ request: URLRequest, providerLabel: String) async throws -> String {
         let (responseData, response) = try await dataLoader(request)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -229,7 +326,14 @@ struct ChatGPTTranscriber: Sendable {
 
         guard (200..<300).contains(httpResponse.statusCode) else {
             let providerMessage = decodeProviderMessage(from: responseData) ?? "status \(httpResponse.statusCode)"
-            throw TranscriptionError.transcriptionFailed(providerMessage)
+            throw TranscriptionHTTPError(
+                providerLabel: providerLabel,
+                statusCode: httpResponse.statusCode,
+                message: providerMessage,
+                contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
+                server: httpResponse.value(forHTTPHeaderField: "Server"),
+                bodyPrefix: String(data: responseData.prefix(512), encoding: .utf8)
+            )
         }
 
         let object = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]

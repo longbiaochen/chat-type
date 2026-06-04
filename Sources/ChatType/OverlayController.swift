@@ -5,12 +5,14 @@ import Foundation
 @MainActor
 protocol OverlayControlling: AnyObject {
     var onCancel: (@MainActor () -> Void)? { get set }
+    var onRetry: (@MainActor () -> Void)? { get set }
 
     func showRecording(elapsedText: String)
     func updateRecording(level: CGFloat, elapsedText: String)
     func showProcessing()
     func showResult(text: String, outcome: InjectionOutcome)
     func showError(_ message: String)
+    func showRetryableError(_ message: String)
     func hide()
 }
 
@@ -25,6 +27,7 @@ final class OverlayController: OverlayControlling {
     private let waveformView: OverlayWaveformView
     private let iconView = NSImageView()
     private let closeButton = OverlayHitTargetButton()
+    private let retryButton = OverlayHitTargetButton()
     private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
     private let trailingTimerLabel = NSTextField(labelWithString: "")
@@ -37,8 +40,12 @@ final class OverlayController: OverlayControlling {
     private var currentState: OverlayVisualState
     private var escapeHotkeyMonitor: HotkeyMonitor?
     var onCancel: (@MainActor () -> Void)?
+    var onRetry: (@MainActor () -> Void)?
 
-    init(onCancel: (@MainActor () -> Void)? = nil) {
+    init(
+        onCancel: (@MainActor () -> Void)? = nil,
+        onRetry: (@MainActor () -> Void)? = nil
+    ) {
         displayedLevels = Array(
             repeating: WaveformNormalizer.minimumVisibleLevel,
             count: style.waveformBarCount
@@ -63,6 +70,7 @@ final class OverlayController: OverlayControlling {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         panel.ignoresMouseEvents = false
         self.onCancel = onCancel
+        self.onRetry = onRetry
 
         configureViews()
     }
@@ -123,6 +131,12 @@ final class OverlayController: OverlayControlling {
         scheduleHide(afterSeconds: style.errorAutoHideDelay ?? 2.0)
     }
 
+    func showRetryableError(_ message: String) {
+        stopProcessingAnimation()
+        apply(state: .retryableError(message))
+        present()
+    }
+
     func hide() {
         hideTask?.cancel()
         stopProcessingAnimation()
@@ -141,7 +155,7 @@ final class OverlayController: OverlayControlling {
         detailLabel.isHidden = !state.allowsSupplementaryText
         trailingTimerLabel.stringValue = state.trailingText ?? ""
         trailingTimerLabel.isHidden = state.trailingText == nil
-        trailingAccessoryStack.isHidden = !state.showsCancelControl && state.trailingText == nil
+        trailingAccessoryStack.isHidden = !state.showsCancelControl && !state.showsRetryControl && state.trailingText == nil
         updateSessionControls(for: state)
 
         switch state {
@@ -164,7 +178,7 @@ final class OverlayController: OverlayControlling {
                 fillColor: kind == .pasted ? ChatTypePalette.success.withAlphaComponent(0.14) : ChatTypePalette.amber.withAlphaComponent(0.16),
                 borderColor: kind == .pasted ? ChatTypePalette.success.withAlphaComponent(0.34) : ChatTypePalette.amber.withAlphaComponent(0.38)
             )
-        case .error:
+        case .error, .retryableError:
             waveformView.isHidden = true
             configureBadge(
                 symbolName: "exclamationmark",
@@ -251,10 +265,10 @@ final class OverlayController: OverlayControlling {
         panelRootView.translatesAutoresizingMaskIntoConstraints = false
         panelRootView.wantsLayer = false
         panelRootView.interactiveViewsProvider = { [weak self] in
-            guard let self, self.currentState.showsCancelControl else {
+            guard let self else {
                 return []
             }
-            return [self.closeButton]
+            return [self.closeButton, self.retryButton]
         }
         panel.contentView = panelRootView
         panelRootView.addSubview(backgroundView)
@@ -324,11 +338,25 @@ final class OverlayController: OverlayControlling {
         closeButton.focusRingType = .none
         closeButton.isHidden = true
 
+        retryButton.translatesAutoresizingMaskIntoConstraints = false
+        retryButton.isBordered = false
+        retryButton.bezelStyle = .regularSquare
+        retryButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Retry transcription")
+        retryButton.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
+        retryButton.imagePosition = .imageOnly
+        retryButton.contentTintColor = ChatTypePalette.mistMuted.withAlphaComponent(0.84)
+        retryButton.target = self
+        retryButton.action = #selector(handleRetryControlPressed)
+        retryButton.setButtonType(.momentaryChange)
+        retryButton.focusRingType = .none
+        retryButton.isHidden = true
+
         trailingAccessoryStack.translatesAutoresizingMaskIntoConstraints = false
         trailingAccessoryStack.orientation = .horizontal
         trailingAccessoryStack.spacing = style.inlineControlGap
         trailingAccessoryStack.alignment = .centerY
         trailingAccessoryStack.addArrangedSubview(trailingTimerLabel)
+        trailingAccessoryStack.addArrangedSubview(retryButton)
         trailingAccessoryStack.addArrangedSubview(closeButton)
 
         backgroundView.addSubview(leadingContainer)
@@ -371,6 +399,8 @@ final class OverlayController: OverlayControlling {
             trailingAccessoryStack.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor, constant: -style.contentPaddingH),
             trailingAccessoryStack.centerYAnchor.constraint(equalTo: backgroundView.centerYAnchor),
             trailingTimerLabel.widthAnchor.constraint(equalToConstant: style.timerWidth),
+            retryButton.widthAnchor.constraint(equalToConstant: style.inlineCancelControlSize),
+            retryButton.heightAnchor.constraint(equalToConstant: style.inlineCancelControlSize),
             closeButton.widthAnchor.constraint(equalToConstant: style.inlineCancelControlSize),
             closeButton.heightAnchor.constraint(equalToConstant: style.inlineCancelControlSize),
         ])
@@ -419,8 +449,10 @@ final class OverlayController: OverlayControlling {
             closeButton.isHidden = false
             activateEscapeHotkeyIfNeeded()
         } else {
-            hideSessionControls()
+            escapeHotkeyMonitor = nil
+            closeButton.isHidden = true
         }
+        retryButton.isHidden = !state.showsRetryControl
     }
 
     private func activateEscapeHotkeyIfNeeded() {
@@ -435,11 +467,17 @@ final class OverlayController: OverlayControlling {
     private func hideSessionControls() {
         escapeHotkeyMonitor = nil
         closeButton.isHidden = true
+        retryButton.isHidden = true
     }
 
     @objc
     private func handleCancelControlPressed() {
         onCancel?()
+    }
+
+    @objc
+    private func handleRetryControlPressed() {
+        onRetry?()
     }
 
     @discardableResult
@@ -460,12 +498,31 @@ final class OverlayController: OverlayControlling {
         return true
     }
 
+    @discardableResult
+    func debugSimulateRetryControlClick() -> Bool {
+        guard !retryButton.isHidden else {
+            return false
+        }
+
+        let centerInRoot = panelRootView.convert(
+            NSPoint(x: retryButton.bounds.midX, y: retryButton.bounds.midY),
+            from: retryButton
+        )
+        guard let hitView = panelRootView.hitTest(centerInRoot) as? NSControl else {
+            return false
+        }
+
+        hitView.performClick(nil)
+        return true
+    }
+
     var debugSnapshot: OverlayDebugSnapshot {
         OverlayDebugSnapshot(
             usesIntegratedSessionControl: closeButton.superview === trailingAccessoryStack,
             hasDetachedClosePanel: false,
             panelIgnoresMouseEvents: panel.ignoresMouseEvents,
             isCancelControlVisible: !closeButton.isHidden,
+            isRetryControlVisible: !retryButton.isHidden,
             isTimerVisible: !trailingTimerLabel.isHidden
         )
     }
@@ -476,6 +533,7 @@ struct OverlayDebugSnapshot: Sendable, Equatable {
     let hasDetachedClosePanel: Bool
     let panelIgnoresMouseEvents: Bool
     let isCancelControlVisible: Bool
+    let isRetryControlVisible: Bool
     let isTimerVisible: Bool
 }
 

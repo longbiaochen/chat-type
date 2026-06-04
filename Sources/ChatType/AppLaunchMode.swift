@@ -1,11 +1,24 @@
 import Foundation
 
+enum OverlayDemoState: String, Equatable, Sendable, CaseIterable {
+    case recording
+    case processing
+    case result
+    case error
+    case retryableError = "retryable-error"
+}
+
 enum AppLaunchMode: Equatable {
     case normal
+    case settings
     case overlayDemo
+    case overlayDemoState(OverlayDemoState)
     case benchmark
 
-    static func resolve(environment: [String: String]) -> AppLaunchMode {
+    static func resolve(
+        environment: [String: String],
+        arguments: [String] = []
+    ) -> AppLaunchMode {
         let benchmarkValue = environment["CHATTYPE_BENCHMARK"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -16,7 +29,19 @@ enum AppLaunchMode: Equatable {
             break
         }
 
-        let rawValue = environment["VOICEDEX_OVERLAY_DEMO"]?
+        if arguments.contains("--settings") || arguments.contains("--open-settings") {
+            return .settings
+        }
+
+        if let state = overlayDemoState(environment: environment, arguments: arguments) {
+            return .overlayDemoState(state)
+        }
+
+        if arguments.contains("--overlay-demo") || arguments.contains("--chattype-overlay-demo") {
+            return .overlayDemo
+        }
+
+        let rawValue = (environment["CHATTYPE_OVERLAY_DEMO"] ?? environment["VOICEDEX_OVERLAY_DEMO"])?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
 
@@ -26,5 +51,28 @@ enum AppLaunchMode: Equatable {
         default:
             return .normal
         }
+    }
+
+    private static func overlayDemoState(
+        environment: [String: String],
+        arguments: [String]
+    ) -> OverlayDemoState? {
+        if let rawState = environment["CHATTYPE_OVERLAY_DEMO_STATE"],
+           let state = OverlayDemoState(rawValue: rawState.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            return state
+        }
+
+        for (index, argument) in arguments.enumerated() {
+            if argument == "--overlay-demo-state", index + 1 < arguments.count {
+                return OverlayDemoState(rawValue: arguments[index + 1])
+            }
+
+            if argument.hasPrefix("--overlay-demo-state=") {
+                let rawState = String(argument.dropFirst("--overlay-demo-state=".count))
+                return OverlayDemoState(rawValue: rawState)
+            }
+        }
+
+        return nil
     }
 }

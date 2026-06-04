@@ -3,29 +3,29 @@ import Testing
 @testable import ChatType
 
 @Test
-func preflightRequiresDesktopHostForChatTypeDefaults() {
+func preflightRequiresChatGPTLoginForChatTypeDefaults() {
     let issues = RuntimePreflight.issues(
         for: AppConfig(),
         environment: [:],
-        authStatusProvider: {
-            throw CodexAuthError.launcherNotFound
+        authSnapshotProvider: {
+            ChatGPTAuthSnapshot(state: .signedOut, detail: "", userEmail: nil)
         }
     )
 
-    #expect(issues == [.missingDesktopHost])
+    #expect(issues == [.chatGPTLoginRequired])
 }
 
 @Test
-func preflightRequiresChatGPTLoginWhenCodexIsNotSignedInWithChatGPT() {
+func preflightFlagsExpiredChatGPTSession() {
     let issues = RuntimePreflight.issues(
         for: AppConfig(),
         environment: [:],
-        authStatusProvider: {
-            throw CodexAuthError.notChatGPT
+        authSnapshotProvider: {
+            ChatGPTAuthSnapshot(state: .expired, detail: "expired", userEmail: "user@example.com")
         }
     )
 
-    #expect(issues == [.hostLoginRequired])
+    #expect(issues == [.chatGPTSessionExpired])
 }
 
 @Test
@@ -46,8 +46,8 @@ func legacyCleanupConfigDoesNotAddDesktopHostRequirementToRecoveryMode() {
     let issues = RuntimePreflight.issues(
         for: config,
         environment: ["OPENAI_API_KEY": "test-key"],
-        authStatusProvider: {
-            throw CodexAuthError.launcherNotFound
+        authSnapshotProvider: {
+            ChatGPTAuthSnapshot(state: .signedOut, detail: "", userEmail: nil)
         }
     )
 

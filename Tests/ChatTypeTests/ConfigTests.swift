@@ -3,16 +3,82 @@ import Testing
 @testable import ChatType
 
 @Test
-func defaultConfigUsesChatTypeDesktopLoginDefaults() throws {
+func defaultConfigUsesChatGPTAccountDefaults() throws {
     let config = AppConfig()
     #expect(config.transcription.hotkeyKeyCode == 96)
-    #expect(config.transcription.provider == .codexChatGPTBridge)
+    #expect(config.transcription.provider == .chatGPTManagedAuth)
     #expect(config.transcription.openAITranscriptionURL == "https://api.openai.com/v1/audio/transcriptions")
     #expect(config.transcription.openAIModel == "gpt-4o-mini-transcribe")
     #expect(config.transcription.openAIAuthTokenEnv == "OPENAI_API_KEY")
     #expect(config.transcription.hintTerms.isEmpty)
+    #expect(config.transcription.speechCleanupEnabled == true)
+    #expect(config.transcription.feedbackSoundsEnabled == true)
     #expect(config.transcription.chatGPTURL == "https://chatgpt.com/backend-api/transcribe")
     #expect(config.injection.preserveClipboard == false)
+    #expect(config.auth.preferredLoginSurface == .defaultBrowser)
+    #expect(config.auth.allowEmbeddedFallback == false)
+    #expect(config.auth.persistCapturedSession == true)
+}
+
+@Test
+func configDoesNotEncodeRemovedProviderFallbackMatrix() throws {
+    let data = try JSONEncoder().encode(AppConfig())
+    let json = String(data: data, encoding: .utf8) ?? ""
+
+    #expect(json.contains("apiFallback") == false)
+    #expect(json.contains("dictationProviders") == false)
+    #expect(json.contains("polishProviders") == false)
+    #expect(json.contains("keychainService") == false)
+    #expect(json.contains("deepseek") == false)
+    #expect(json.contains("kimi") == false)
+    #expect(json.contains("gemini") == false)
+    #expect(json.contains("anthropic") == false)
+    #expect(json.contains("apiKey") == false)
+    #expect(json.contains("sk-") == false)
+}
+
+@Test
+func legacyProviderFallbackMatrixDecodesAndIsDroppedOnEncode() throws {
+    let json = """
+    {
+      "transcription": {
+        "apiFallback": {
+          "mode": "automaticKeyFallback",
+          "dictationProviders": [
+            {
+              "id": "groq-whisper",
+              "title": "Groq Whisper",
+              "model": "whisper-large-v3",
+              "baseURL": "https://api.groq.com/openai/v1/audio/transcriptions",
+              "keychainService": "chattype-groq-api-key",
+              "documentationURL": "https://console.groq.com/docs/speech-to-text",
+              "isEnabled": true
+            }
+          ],
+          "polishProviders": [
+            {
+              "id": "deepseek-polish",
+              "title": "DeepSeek",
+              "model": "deepseek-v4-pro",
+              "baseURL": "https://api.deepseek.com",
+              "keychainService": "chattype-deepseek-api-key",
+              "documentationURL": "https://api-docs.deepseek.com/api/list-models",
+              "isEnabled": true
+            }
+          ]
+        }
+      }
+    }
+    """.data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: json)
+    let encoded = try JSONEncoder().encode(decoded)
+    let encodedJSON = String(data: encoded, encoding: .utf8) ?? ""
+
+    #expect(decoded.transcription.provider == .chatGPTManagedAuth)
+    #expect(encodedJSON.contains("apiFallback") == false)
+    #expect(encodedJSON.contains("deepseek") == false)
+    #expect(encodedJSON.contains("groq") == false)
 }
 
 @Test
@@ -23,6 +89,7 @@ func defaultConfigEncodesTerminologyDefaults() throws {
     let terminology = try #require(transcription["terminology"] as? [String: Any])
 
     #expect(terminology["enabled"] as? Bool == true)
+    #expect((terminology["entries"] as? [Any])?.isEmpty == true)
     #expect((terminology["importedEntries"] as? [Any])?.isEmpty == true)
     #expect(terminology["lastImportedSource"] == nil)
     #expect(terminology["lastImportedAt"] == nil)
@@ -55,6 +122,58 @@ func configRoundTripPreservesHiddenHintTerms() throws {
 }
 
 @Test
+func configRoundTripPreservesSpeechCleanupSetting() throws {
+    var config = AppConfig()
+    config.transcription.speechCleanupEnabled = false
+
+    let data = try JSONEncoder().encode(config)
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
+
+    #expect(decoded.transcription.speechCleanupEnabled == false)
+}
+
+@Test
+func legacyConfigWithoutSpeechCleanupSettingDefaultsToEnabled() throws {
+    let json = """
+    {
+      "transcription": {
+        "hotkeyKeyCode": 96
+      }
+    }
+    """.data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: json)
+
+    #expect(decoded.transcription.speechCleanupEnabled == true)
+}
+
+@Test
+func configRoundTripPreservesFeedbackSoundSetting() throws {
+    var config = AppConfig()
+    config.transcription.feedbackSoundsEnabled = false
+
+    let data = try JSONEncoder().encode(config)
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
+
+    #expect(decoded.transcription.feedbackSoundsEnabled == false)
+}
+
+@Test
+func legacyConfigWithoutFeedbackSoundSettingDefaultsToEnabled() throws {
+    let json = """
+    {
+      "transcription": {
+        "hotkeyKeyCode": 96
+      }
+    }
+    """.data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: json)
+
+    #expect(decoded.transcription.feedbackSoundsEnabled == true)
+}
+
+@Test
 func configRoundTripPreservesImportedTerminologyEntries() throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -64,13 +183,11 @@ func configRoundTripPreservesImportedTerminologyEntries() throws {
     config.transcription.terminology.importedEntries = [
         TerminologyEntry(
             canonical: "TypeWhisper",
-            aliases: ["Type Whisper", "Takwiisper"],
-            caseSensitive: true
+            aliases: ["Type Whisper", "Takwiisper"]
         ),
         TerminologyEntry(
             canonical: "OpenAI Compatible",
-            aliases: ["Open AI Compatible"],
-            caseSensitive: true
+            aliases: ["Open AI Compatible"]
         ),
     ]
     config.transcription.terminology.lastImportedSource = "/Users/test/Library/Application Support/TypeWhisper/dictionary.store"
@@ -91,6 +208,95 @@ func configRoundTripPreservesImportedTerminologyEntries() throws {
 }
 
 @Test
+func legacyImportedTerminologyEntriesMigrateIntoUserDictionaryEntries() throws {
+    let json = """
+    {
+      "transcription": {
+        "terminology": {
+          "enabled": true,
+          "importedEntries": [
+            {
+              "canonical": "TypeWhisper",
+              "aliases": ["Type Whisper", "Takwiisper"],
+              "caseSensitive": true,
+              "source": "typewhisper-import"
+            }
+          ]
+        }
+      }
+    }
+    """.data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: json)
+    let migrated = try #require(decoded.transcription.terminology.entries.first)
+
+    #expect(migrated.type == .term)
+    #expect(migrated.original == "TypeWhisper")
+    #expect(migrated.aliases == ["Type Whisper", "Takwiisper"])
+    #expect(migrated.isEnabled == true)
+    #expect(migrated.source == "typewhisper-import")
+}
+
+@Test
+func configRoundTripPreservesUserDictionaryEntryFields() throws {
+    var config = AppConfig()
+    config.transcription.terminology.entries = [
+        TerminologyEntry(
+            type: .correction,
+            original: "opencloud",
+            replacement: "OpenClaw",
+            aliases: [],
+            isEnabled: true,
+            source: "user",
+            usageCount: 3,
+            createdAt: "2026-05-07T10:00:00Z"
+        ),
+        TerminologyEntry(
+            type: .suggestion,
+            original: "TypeWhisper",
+            replacement: nil,
+            aliases: [],
+            isEnabled: false,
+            source: "auto-suggestion",
+            usageCount: 4,
+            createdAt: "2026-05-07T10:01:00Z"
+        ),
+    ]
+
+    let data = try JSONEncoder().encode(config)
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
+    let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let transcription = try #require(object["transcription"] as? [String: Any])
+    let terminology = try #require(transcription["terminology"] as? [String: Any])
+    let entries = try #require(terminology["entries"] as? [[String: Any]])
+
+    #expect(decoded.transcription.terminology.entries == config.transcription.terminology.entries)
+    #expect(entries.allSatisfy { $0["caseSensitive"] == nil })
+}
+
+@Test
+func legacyCaseSensitiveDictionaryEntryDecodesButIsIgnored() throws {
+    let json = """
+    {
+      "type": "correction",
+      "original": "opencloud",
+      "replacement": "OpenClaw",
+      "aliases": [],
+      "caseSensitive": true,
+      "isEnabled": true,
+      "source": "user",
+      "usageCount": 0,
+      "createdAt": "2026-05-07T10:00:00Z"
+    }
+    """.data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(TerminologyEntry.self, from: json)
+
+    #expect(decoded.original == "opencloud")
+    #expect(decoded.replacement == "OpenClaw")
+}
+
+@Test
 func legacyCleanupConfigStillDecodesWithoutCrash() throws {
     let json = """
     {
@@ -106,7 +312,7 @@ func legacyCleanupConfigStillDecodesWithoutCrash() throws {
     """.data(using: .utf8)!
 
     let decoded = try JSONDecoder().decode(AppConfig.self, from: json)
-    #expect(decoded.transcription.provider == .codexChatGPTBridge)
+    #expect(decoded.transcription.provider == .chatGPTManagedAuth)
     #expect(decoded.transcription.hintTerms.isEmpty)
     #expect(decoded.injection.preserveClipboard == false)
 }

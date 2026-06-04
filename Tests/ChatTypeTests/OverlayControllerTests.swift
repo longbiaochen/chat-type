@@ -8,7 +8,7 @@ func minimalOverlayPresetUsesNineBarVoiceGlyph() {
 
     #expect(preset.pillHeight == 44)
     #expect(preset.cornerRadius == 15)
-    #expect(preset.bottomInset == 24)
+    #expect(preset.bottomInset == 8)
     #expect(preset.waveformBarCount == 9)
     #expect(preset.showsTranscriptPreview == false)
     #expect(preset.inlineCancelControlSize == 14)
@@ -49,9 +49,19 @@ func processingOverlayStateShowsCancelControlWithoutTimer() {
 }
 
 @Test
-func successAndErrorStatesRemainNonInteractive() {
+func successAndOrdinaryErrorStatesRemainNonInteractive() {
     #expect(OverlayVisualState.success(.pasted).showsCancelControl == false)
     #expect(OverlayVisualState.error("boom").showsCancelControl == false)
+    #expect(OverlayVisualState.error("boom").showsRetryControl == false)
+}
+
+@Test
+func retryableErrorStateShowsRetryControlWithoutCancelControl() {
+    let state = OverlayVisualState.retryableError("Cloudflare 403")
+
+    #expect(state.showsCancelControl == false)
+    #expect(state.showsRetryControl == true)
+    #expect(state.trailingText == nil)
 }
 
 @Test
@@ -160,6 +170,18 @@ func overlayControllerOnlyShowsInlineCancelControlForActiveSessionStates() {
 
     overlay.showResult(text: "Done", outcome: .pasted)
     #expect(overlay.debugSnapshot.isCancelControlVisible == false)
+    #expect(overlay.debugSnapshot.isRetryControlVisible == false)
+}
+
+@MainActor
+@Test
+func overlayControllerRetryableErrorShowsRetryControlOnly() {
+    let overlay = OverlayController()
+
+    overlay.showRetryableError("Cloudflare 403")
+
+    #expect(overlay.debugSnapshot.isCancelControlVisible == false)
+    #expect(overlay.debugSnapshot.isRetryControlVisible == true)
 }
 
 @MainActor
@@ -174,4 +196,18 @@ func overlayControllerCancelControlRoutesClickIntoOnCancel() {
 
     #expect(overlay.debugSimulateCancelControlClick() == true)
     #expect(cancelCallCount == 1)
+}
+
+@MainActor
+@Test
+func overlayControllerRetryControlRoutesClickIntoOnRetry() {
+    var retryCallCount = 0
+    let overlay = OverlayController(onRetry: {
+        retryCallCount += 1
+    })
+
+    overlay.showRetryableError("Cloudflare 403")
+
+    #expect(overlay.debugSimulateRetryControlClick() == true)
+    #expect(retryCallCount == 1)
 }

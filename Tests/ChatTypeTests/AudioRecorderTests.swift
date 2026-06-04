@@ -19,6 +19,7 @@ private final class FakeRecordingSession: RecordingSessionControlling, @unchecke
 
     func stop() {
         stopCallCount += 1
+        currentTime = 0
     }
 
     func updateMeters() {}
@@ -132,5 +133,30 @@ struct AudioRecorderTests {
         #expect(throws: RecorderError.noActiveRecording) {
             try recorder.stopRecording()
         }
+    }
+
+    @MainActor
+    @Test
+    func stopRecordingCapturesDurationBeforeStoppingRecorder() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("duration-recording-test.wav")
+        try Data("wave".utf8).write(to: fileURL)
+
+        let session = FakeRecordingSession()
+        session.currentTime = 3.45
+        let recorder = AudioRecorder(
+            sampleRateHz: 16_000,
+            permissionProvider: { .granted },
+            permissionRequester: { true },
+            sessionFactory: { _, _ in session },
+            temporaryFileURLFactory: { fileURL },
+            fileManager: .default
+        )
+
+        try await recorder.startRecording()
+        let audio = try recorder.stopRecording()
+
+        #expect(audio.durationMs == 3_450)
+        #expect(session.stopCallCount == 1)
+        try? FileManager.default.removeItem(at: fileURL)
     }
 }

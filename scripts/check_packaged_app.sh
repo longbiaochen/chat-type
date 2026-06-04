@@ -18,4 +18,11 @@ if [[ "$ENTITLEMENTS" != *"com.apple.security.device.audio-input"* ]]; then
   exit 1
 fi
 
+for sound in recording-start.wav recording-stop.wav; do
+  if [[ ! -f "$APP/Contents/Resources/Sounds/$sound" ]]; then
+    echo "Packaged app is missing feedback sound resource: $sound" >&2
+    exit 1
+  fi
+done
+
 echo "Packaged app metadata looks correct."

@@ -23,7 +23,8 @@ let package = Package(
                 .product(name: "PermissionFlow", package: "PermissionFlow"),
                 .product(name: "SystemSettingsKit", package: "PermissionFlow"),
             ],
-            path: "Sources/ChatType"
+            path: "Sources/ChatType",
+            exclude: ["Resources"]
         ),
         .testTarget(
             name: "ChatTypeTests",

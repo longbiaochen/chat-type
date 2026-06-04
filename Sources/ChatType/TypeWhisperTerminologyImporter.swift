@@ -58,7 +58,16 @@ struct TypeWhisperTerminologyImporter {
             .appendingPathComponent("dictionary.store")
     }
 
-    private func fetchRows(from databaseURL: URL) throws -> [(original: String, replacement: String, caseSensitive: Bool)] {
+    private struct TypeWhisperRow {
+        let type: TerminologyEntryType
+        let original: String
+        let replacement: String
+        let isEnabled: Bool
+        let usageCount: Int
+        let createdAt: String?
+    }
+
+    private func fetchRows(from databaseURL: URL) throws -> [TypeWhisperRow] {
         var database: OpaquePointer?
         guard sqlite3_open_v2(databaseURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let database else {
             sqlite3_close(database)
@@ -67,10 +76,9 @@ struct TypeWhisperTerminologyImporter {
         defer { sqlite3_close(database) }
 
         let sql = """
-        SELECT ZORIGINAL, COALESCE(ZREPLACEMENT, ''), ZCASESENSITIVE
+        SELECT ZENTRYTYPE, ZORIGINAL, COALESCE(ZREPLACEMENT, ''), ZCASESENSITIVE, ZISENABLED, COALESCE(ZUSAGECOUNT, 0), ZCREATEDAT
         FROM ZDICTIONARYENTRY
-        WHERE ZISENABLED = 1
-          AND ZENTRYTYPE = 'term'
+        WHERE ZENTRYTYPE IN ('term', 'correction')
           AND TRIM(COALESCE(ZORIGINAL, '')) != ''
         ORDER BY Z_PK ASC
         """
@@ -82,25 +90,43 @@ struct TypeWhisperTerminologyImporter {
         }
         defer { sqlite3_finalize(statement) }
 
-        var rows: [(original: String, replacement: String, caseSensitive: Bool)] = []
+        var rows: [TypeWhisperRow] = []
         while sqlite3_step(statement) == SQLITE_ROW {
-            let original = String(cString: sqlite3_column_text(statement, 0))
-            let replacement = String(cString: sqlite3_column_text(statement, 1))
-            let caseSensitive = sqlite3_column_int(statement, 2) != 0
-            rows.append((original, replacement, caseSensitive))
+            let rawType = String(cString: sqlite3_column_text(statement, 0))
+            guard let type = TerminologyEntryType(rawValue: rawType) else {
+                continue
+            }
+
+            let original = String(cString: sqlite3_column_text(statement, 1))
+            let replacement = String(cString: sqlite3_column_text(statement, 2))
+            let isEnabled = sqlite3_column_int(statement, 4) != 0
+            let usageCount = Int(sqlite3_column_int(statement, 5))
+            let createdAt = sqlite3_column_text(statement, 6).map { String(cString: $0) }
+            rows.append(
+                TypeWhisperRow(
+                    type: type,
+                    original: original,
+                    replacement: replacement,
+                    isEnabled: isEnabled,
+                    usageCount: usageCount,
+                    createdAt: createdAt
+                )
+            )
         }
 
         return rows
     }
 
     private func merge(
-        rows: [(original: String, replacement: String, caseSensitive: Bool)]
+        rows: [TypeWhisperRow]
     ) -> [TerminologyEntry] {
         struct PartialEntry {
             var canonical: String
             var aliases: [String] = []
             var aliasKeys: Set<String> = []
-            var caseSensitive: Bool
+            var isEnabled: Bool
+            var usageCount: Int
+            var createdAt: String
 
             mutating func addAlias(_ alias: String) {
                 let trimmed = alias.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -119,11 +145,44 @@ struct TypeWhisperTerminologyImporter {
         }
 
         var merged: [String: PartialEntry] = [:]
+        var corrections: [TerminologyEntry] = []
 
         for row in rows {
             let original = row.original.trimmingCharacters(in: .whitespacesAndNewlines)
             let replacement = row.replacement.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !original.isEmpty else {
+                continue
+            }
+
+            if row.type == .correction {
+                corrections.append(
+                    TerminologyEntry(
+                        type: .correction,
+                        original: original,
+                        replacement: replacement,
+                        aliases: [],
+                        isEnabled: row.isEnabled,
+                        source: "typewhisper-import",
+                        usageCount: row.usageCount,
+                        createdAt: normalizedCreatedAt(row.createdAt)
+                    )
+                )
+                continue
+            }
+
+            if !row.isEnabled {
+                corrections.append(
+                    TerminologyEntry(
+                        type: .term,
+                        original: original,
+                        replacement: nil,
+                        aliases: [],
+                        isEnabled: false,
+                        source: "typewhisper-import",
+                        usageCount: row.usageCount,
+                        createdAt: normalizedCreatedAt(row.createdAt)
+                    )
+                )
                 continue
             }
 
@@ -133,7 +192,9 @@ struct TypeWhisperTerminologyImporter {
             if merged[key] == nil {
                 merged[key] = PartialEntry(
                     canonical: canonical,
-                    caseSensitive: row.caseSensitive
+                    isEnabled: row.isEnabled,
+                    usageCount: row.usageCount,
+                    createdAt: normalizedCreatedAt(row.createdAt)
                 )
             }
 
@@ -142,18 +203,33 @@ struct TypeWhisperTerminologyImporter {
             }
         }
 
-        return merged.values
+        return (
+            merged.values
             .map { partial in
                 TerminologyEntry(
-                    canonical: partial.canonical,
+                    type: .term,
+                    original: partial.canonical,
+                    replacement: nil,
                     aliases: partial.aliases.sorted {
                         $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
                     },
-                    caseSensitive: partial.caseSensitive
+                    isEnabled: partial.isEnabled,
+                    source: "typewhisper-import",
+                    usageCount: partial.usageCount,
+                    createdAt: partial.createdAt
                 )
             }
+            + corrections
+        )
             .sorted {
                 $0.canonical.localizedCaseInsensitiveCompare($1.canonical) == .orderedAscending
             }
+    }
+
+    private func normalizedCreatedAt(_ value: String?) -> String {
+        guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return iso8601Formatter.string(from: Date())
+        }
+        return value
     }
 }

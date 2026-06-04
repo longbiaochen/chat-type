@@ -33,7 +33,7 @@ struct OverlayStylePreset: Sendable, Equatable {
         recordingPillWidth: 224,
         pillHeight: 44,
         errorPillWidth: 286,
-        bottomInset: 24,
+        bottomInset: 8,
         cornerRadius: 15,
         contentPaddingH: 10,
         contentPaddingV: 8,
@@ -60,7 +60,7 @@ struct OverlayStylePreset: Sendable, Equatable {
         switch state {
         case .recording:
             return recordingPillWidth
-        case .error:
+        case .error, .retryableError:
             return errorPillWidth
         default:
             return pillWidth
@@ -92,6 +92,7 @@ enum OverlayVisualState: Sendable, Equatable {
     case processing
     case success(OverlaySuccessKind)
     case error(String)
+    case retryableError(String)
 
     var label: String {
         switch self {
@@ -101,7 +102,7 @@ enum OverlayVisualState: Sendable, Equatable {
             return "Processing"
         case .success(let kind):
             return kind.label
-        case .error:
+        case .error, .retryableError:
             return "Error"
         }
     }
@@ -114,38 +115,51 @@ enum OverlayVisualState: Sendable, Equatable {
             return .waveform
         case .success(let kind):
             return .icon(symbolName: kind == .pasted ? "checkmark.circle.fill" : "doc.on.clipboard.fill")
-        case .error:
+        case .error, .retryableError:
             return .icon(symbolName: "exclamationmark.triangle.fill")
         }
     }
 
     var allowsSupplementaryText: Bool {
-        if case .error = self {
+        switch self {
+        case .error, .retryableError:
             return true
+        case .recording, .processing, .success:
+            return false
         }
-        return false
     }
 
     var showsCancelControl: Bool {
         switch self {
         case .recording, .processing:
             return true
-        case .success, .error:
+        case .success, .error, .retryableError:
             return false
         }
+    }
+
+    var showsRetryControl: Bool {
+        if case .retryableError = self {
+            return true
+        }
+        return false
     }
 
     var trailingText: String? {
         switch self {
         case .recording(_, let elapsedText):
             return elapsedText
-        case .processing, .success, .error:
+        case .processing, .success, .error, .retryableError:
             return nil
         }
     }
 
     var supplementaryText: String? {
-        guard case .error(let message) = self else {
+        let message: String
+        switch self {
+        case .error(let value), .retryableError(let value):
+            message = value
+        case .recording, .processing, .success:
             return nil
         }
         return Self.collapseErrorMessage(message)

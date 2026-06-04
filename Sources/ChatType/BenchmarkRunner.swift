@@ -27,18 +27,18 @@ private struct BenchmarkRunResult: Sendable {
 
 struct BenchmarkRunner {
     let config: AppConfig
-    let authClient: CodexAuthClient
+    let authManager: any ChatGPTAuthProviding
     let environment: [String: String]
     let fileManager: FileManager
 
     init(
         config: AppConfig,
-        authClient: CodexAuthClient,
+        authManager: any ChatGPTAuthProviding,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
     ) {
         self.config = config
-        self.authClient = authClient
+        self.authManager = authManager
         self.environment = environment
         self.fileManager = fileManager
     }
@@ -56,10 +56,10 @@ struct BenchmarkRunner {
             let audio = try recordedAudio(from: fileURL)
 
             for _ in 0..<runs {
-                let coldClient = CodexAuthClient(cache: AuthStatusCache(ttl: 0))
+                let coldAuthManager = ChatGPTAuthManager(store: InMemoryChatGPTSessionStore())
                 let coldPipeline = DictationPipeline(
                     transcriber: ChatGPTTranscriber(
-                        authClient: coldClient,
+                        authManager: coldAuthManager,
                         config: config.transcription
                     ),
                     normalizer: TerminologyNormalizer(),
@@ -95,11 +95,11 @@ struct BenchmarkRunner {
                 }
             }
 
-            try? authClient.prewarmChatGPTStatus()
+            await authManager.prewarmSession()
             for _ in 0..<runs {
                 let warmPipeline = DictationPipeline(
                     transcriber: ChatGPTTranscriber(
-                        authClient: authClient,
+                        authManager: authManager,
                         config: config.transcription
                     ),
                     normalizer: TerminologyNormalizer(),

@@ -11,22 +11,35 @@ private struct ExactRule {
     let canonical: String
     let regex: NSRegularExpression
     let sortKey: Int
+    let priority: Int
+    let preserveMixedCaseFromLowercaseCanonical: Bool
 }
 
 private struct FuzzyRule {
     let canonical: String
     let referenceSkeletons: [String]
+    let preserveMixedCaseFromLowercaseCanonical: Bool
 }
 
 private struct FuzzyCandidate {
     let canonical: String
     let distance: Int
     let similarity: Double
+    let preserveMixedCaseFromLowercaseCanonical: Bool
 }
 
 private struct FuzzyPassResult {
     let text: String
     let replacementCount: Int
+}
+
+private extension Character {
+    var isASCIIAlphanumeric: Bool {
+        unicodeScalars.count == 1
+            && unicodeScalars.allSatisfy {
+                $0.isASCII && CharacterSet.alphanumerics.contains($0)
+            }
+    }
 }
 
 struct TerminologyNormalizer: TranscriptNormalizing {
@@ -39,6 +52,13 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         let simplifiedText = simplifiedChineseText(from: artifactStrippedText)
         var output = simplifiedText
         var applied = artifactStrippedText != text || simplifiedText != artifactStrippedText
+
+        let correctionPass = applyExactRules(
+            to: output,
+            rules: correctionRules(from: importedEntries)
+        )
+        output = correctionPass.text
+        applied = applied || correctionPass.replacementCount > 0
 
         let exactPass = applyExactRules(
             to: output,
@@ -57,10 +77,14 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         output = fuzzyPass.text
         applied = applied || fuzzyPass.replacementCount > 0
 
+        let punctuatedText = fullWidthPunctuationText(from: output)
+        applied = applied || punctuatedText != output
+        output = punctuatedText
+
         return NormalizationResult(
             text: output,
             applied: applied,
-            exactReplacementCount: exactPass.replacementCount,
+            exactReplacementCount: correctionPass.replacementCount + exactPass.replacementCount,
             fuzzyReplacementCount: fuzzyPass.replacementCount
         )
     }
@@ -72,7 +96,12 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         var output = text
         var replacementCount = 0
 
-        for rule in rules.sorted(by: { $0.sortKey > $1.sortKey }) {
+        for rule in rules.sorted(by: { lhs, rhs in
+            if lhs.sortKey != rhs.sortKey {
+                return lhs.sortKey > rhs.sortKey
+            }
+            return lhs.priority > rhs.priority
+        }) {
             let matches = rule.regex.matches(
                 in: output,
                 options: [],
@@ -86,6 +115,10 @@ struct TerminologyNormalizer: TranscriptNormalizing {
 
                 let matchedText = String(output[range])
                 guard matchedText != rule.canonical else {
+                    continue
+                }
+                guard !rule.preserveMixedCaseFromLowercaseCanonical
+                    || !wouldDowncaseMixedCaseLatin(matchedText, to: rule.canonical) else {
                     continue
                 }
 
@@ -108,7 +141,7 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         let protectedRanges = protectedLiteralRanges(in: text)
         guard
             let regex = try? NSRegularExpression(
-                pattern: #"(?<![A-Za-z0-9])([A-Za-z0-9]+(?:[ ._-]+[A-Za-z0-9]+){0,2})(?![A-Za-z0-9])"#,
+                pattern: #"(?<![\p{Latin}0-9])([\p{Latin}0-9]+(?:[ ._-]+[\p{Latin}0-9]+){0,2})(?![\p{Latin}0-9])"#,
                 options: []
             )
         else {
@@ -139,6 +172,10 @@ struct TerminologyNormalizer: TranscriptNormalizing {
                 continue
             }
             guard candidate != winner.canonical else {
+                continue
+            }
+            guard !winner.preserveMixedCaseFromLowercaseCanonical
+                || !wouldDowncaseMixedCaseLatin(candidate, to: winner.canonical) else {
                 continue
             }
 
@@ -186,7 +223,8 @@ struct TerminologyNormalizer: TranscriptNormalizing {
                 let candidateScore = FuzzyCandidate(
                     canonical: rule.canonical,
                     distance: distance,
-                    similarity: similarity
+                    similarity: similarity,
+                    preserveMixedCaseFromLowercaseCanonical: rule.preserveMixedCaseFromLowercaseCanonical
                 )
 
                 if let currentBest = bestForCanonical {
@@ -267,8 +305,8 @@ struct TerminologyNormalizer: TranscriptNormalizing {
     ) -> [ExactRule] {
         var rules: [ExactRule] = []
 
-        for entry in importedEntries {
-            rules.append(contentsOf: exactRules(for: entry))
+        for entry in importedEntries where entry.isEnabled && entry.type == .term {
+            rules.append(contentsOf: exactRules(for: entry, priority: 100))
         }
 
         for term in normalizedTerms(from: hintTerms) {
@@ -280,7 +318,9 @@ struct TerminologyNormalizer: TranscriptNormalizing {
                     ExactRule(
                         canonical: term,
                         regex: regex,
-                        sortKey: collapsedLatinSkeleton(for: term).count
+                        sortKey: collapsedLatinSkeleton(for: term).count,
+                        priority: 0,
+                        preserveMixedCaseFromLowercaseCanonical: false
                     )
                 )
             }
@@ -289,7 +329,34 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         return rules
     }
 
-    private func exactRules(for entry: TerminologyEntry) -> [ExactRule] {
+    private func correctionRules(from entries: [TerminologyEntry]) -> [ExactRule] {
+        entries
+            .filter { $0.isEnabled && $0.type == .correction }
+            .flatMap { entry -> [ExactRule] in
+                let replacement = entry.replacement ?? ""
+                return normalizedTerms(from: [entry.original] + entry.aliases).compactMap { term in
+                    guard let regex = try? NSRegularExpression(
+                        pattern: exactPattern(for: term),
+                        options: [.caseInsensitive]
+                    ) else {
+                        return nil
+                    }
+
+                    return ExactRule(
+                        canonical: replacement,
+                        regex: regex,
+                        sortKey: collapsedLatinSkeleton(for: term).count,
+                        priority: 1_000,
+                        preserveMixedCaseFromLowercaseCanonical: false
+                    )
+                }
+            }
+    }
+
+    private func exactRules(
+        for entry: TerminologyEntry,
+        priority: Int
+    ) -> [ExactRule] {
         var seen = Set<String>()
         var rules: [ExactRule] = []
 
@@ -311,7 +378,9 @@ struct TerminologyNormalizer: TranscriptNormalizing {
                 ExactRule(
                     canonical: entry.canonical,
                     regex: regex,
-                    sortKey: collapsedLatinSkeleton(for: term).count
+                    sortKey: collapsedLatinSkeleton(for: term).count,
+                    priority: priority,
+                    preserveMixedCaseFromLowercaseCanonical: true
                 )
             )
         }
@@ -320,7 +389,9 @@ struct TerminologyNormalizer: TranscriptNormalizing {
     }
 
     private func fuzzyRules(from entries: [TerminologyEntry]) -> [FuzzyRule] {
-        entries.compactMap { entry in
+        entries
+            .filter { $0.isEnabled && $0.type == .term }
+            .compactMap { entry in
             let references = normalizedTerms(from: [entry.canonical] + entry.aliases)
                 .filter { containsLatinLetters($0) }
                 .filter { !shouldSkipFuzzyReference($0) }
@@ -333,7 +404,8 @@ struct TerminologyNormalizer: TranscriptNormalizing {
 
             return FuzzyRule(
                 canonical: entry.canonical,
-                referenceSkeletons: Array(Set(references)).sorted()
+                referenceSkeletons: Array(Set(references)).sorted(),
+                preserveMixedCaseFromLowercaseCanonical: true
             )
         }
     }
@@ -387,11 +459,12 @@ struct TerminologyNormalizer: TranscriptNormalizing {
 
     private func protectedLiteralRanges(in text: String) -> [NSRange] {
         let patterns = [
-            #"https?://\S+"#,
+            #"https?://[^\s,，。.!！?？;；:：\)\）\]\】]+"#,
             #"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b"#,
-            #"(?:~|/)[^\s]+"#,
+            #"(?<![:/])(?:~|/)[^\s,，。.!！?？;；:：\)\）\]\】]+"#,
             #"(?<!\S)--?[A-Za-z0-9][A-Za-z0-9-]*"#,
             #"\bv?\d+(?:\.\d+){1,}\b"#,
+            #"\b[A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z0-9][A-Za-z0-9._-]*\b"#,
         ]
 
         let fullRange = NSRange(text.startIndex..., in: text)
@@ -400,6 +473,84 @@ struct TerminologyNormalizer: TranscriptNormalizing {
                 return []
             }
             return regex.matches(in: text, options: [], range: fullRange).map(\.range)
+        }
+    }
+
+    private func fullWidthPunctuationText(from text: String) -> String {
+        guard containsHanCharacters(text) else {
+            return text
+        }
+
+        let protectedRanges = protectedLiteralRanges(in: text)
+        let characters = Array(text)
+        var output = ""
+        var utf16Offset = 0
+
+        for index in characters.indices {
+            let character = characters[index]
+            let length = String(character).utf16.count
+            defer { utf16Offset += length }
+
+            guard !isProtected(offset: utf16Offset, in: protectedRanges) else {
+                output.append(character)
+                continue
+            }
+
+            output.append(
+                fullWidthPunctuation(
+                    for: character,
+                    previous: index > characters.startIndex ? characters[characters.index(before: index)] : nil,
+                    next: index < characters.index(before: characters.endIndex) ? characters[characters.index(after: index)] : nil
+                ) ?? String(character)
+            )
+        }
+
+        return output
+    }
+
+    private func fullWidthPunctuation(
+        for character: Character,
+        previous: Character?,
+        next: Character?
+    ) -> String? {
+        switch character {
+        case ",":
+            if previous?.isNumber == true, next?.isNumber == true {
+                return nil
+            }
+            return "，"
+        case ".":
+            if previous?.isASCIIAlphanumeric == true, next?.isASCIIAlphanumeric == true {
+                return nil
+            }
+            return "。"
+        case "?":
+            return "？"
+        case "!":
+            return "！"
+        case ":":
+            if previous?.isNumber == true, next?.isNumber == true {
+                return nil
+            }
+            return "："
+        case ";":
+            return "；"
+        case "(":
+            return "（"
+        case ")":
+            return "）"
+        case "[":
+            return "【"
+        case "]":
+            return "】"
+        default:
+            return nil
+        }
+    }
+
+    private func isProtected(offset: Int, in ranges: [NSRange]) -> Bool {
+        ranges.contains { range in
+            NSLocationInRange(offset, range)
         }
     }
 
@@ -457,8 +608,16 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         }
     }
 
+    private func containsHanCharacters(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            (0x4E00...0x9FFF).contains(Int(scalar.value))
+                || (0x3400...0x4DBF).contains(Int(scalar.value))
+        }
+    }
+
     private func collapsedLatinSkeleton(for text: String) -> String {
-        let filteredScalars = text.lowercased().unicodeScalars.filter { scalar in
+        let folded = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        let filteredScalars = folded.lowercased().unicodeScalars.filter { scalar in
             scalar.isASCII && CharacterSet.alphanumerics.contains(scalar)
         }
         return String(String.UnicodeScalarView(filteredScalars))
@@ -473,6 +632,16 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         }
 
         return latinLetters.allSatisfy { CharacterSet.lowercaseLetters.contains($0) }
+    }
+
+    private func wouldDowncaseMixedCaseLatin(_ matchedText: String, to canonical: String) -> Bool {
+        guard isPureLowercaseLatin(canonical) else {
+            return false
+        }
+
+        return matchedText.unicodeScalars.contains {
+            $0.isASCII && CharacterSet.uppercaseLetters.contains($0)
+        }
     }
 
     private func damerauLevenshteinDistance(

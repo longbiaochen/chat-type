@@ -3,6 +3,13 @@ import AVFoundation
 import Foundation
 import OSLog
 
+struct TranscriptionAttemptPolicy: Sendable, Equatable {
+    let cloudflareChallengeMaxAttempts: Int
+
+    static let automatic = TranscriptionAttemptPolicy(cloudflareChallengeMaxAttempts: 3)
+    static let manualRetry = TranscriptionAttemptPolicy(cloudflareChallengeMaxAttempts: 1)
+}
+
 @MainActor
 final class AppCoordinator {
     enum State: Equatable {
@@ -17,15 +24,17 @@ final class AppCoordinator {
         @escaping () -> Void,
         @escaping () -> Void
     ) -> any StatusMenuUpdating
-    typealias PipelineFactory = @Sendable (TranscriptionConfig, CodexAuthClient) -> any DictationPreparing
+    typealias PipelineFactory = @Sendable (TranscriptionConfig, any ChatGPTAuthProviding, TranscriptionAttemptPolicy) -> any DictationPreparing
     typealias LaunchAppContextProvider = @MainActor () -> LaunchAppContext?
 
     let configStore: ConfigStore
     let notifier: any NotificationDispatching
     let injector: any TextInjecting
     let overlay: any OverlayControlling
-    let authClient: CodexAuthClient
+    let authManager: any ChatGPTAuthProviding
     let latencyRecorder: any LatencyRecording
+    let historyRecorder: any TranscriptionHistoryRecording
+    let soundFeedback: any SoundFeedbackPlaying
     let recorderFactory: RecorderFactory
     let statusMenuFactory: StatusMenuFactory
     let pipelineFactory: PipelineFactory
@@ -49,6 +58,15 @@ final class AppCoordinator {
     private var startRecordingTask: Task<Void, Never>?
     private var activeSessionID: UUID?
     private var recordingStartedAt: DispatchTime?
+    private var pendingRetry: PendingRetry?
+    private var authStateObserver: NSObjectProtocol?
+
+    private struct PendingRetry {
+        let audio: RecordedAudio
+        let launchAppContext: LaunchAppContext?
+        let transcriptionConfig: TranscriptionConfig
+        let injectionConfig: InjectionConfig
+    }
 
     init(
         configStore: ConfigStore = ConfigStore(),
@@ -56,8 +74,10 @@ final class AppCoordinator {
         notifier: any NotificationDispatching = Notifier(),
         injector: any TextInjecting = TextInjector(),
         overlay: (any OverlayControlling)? = nil,
-        authClient: CodexAuthClient = CodexAuthClient(),
+        authManager: any ChatGPTAuthProviding = ChatGPTAuthManager(),
         latencyRecorder: any LatencyRecording = LatencyRecorder(),
+        historyRecorder: any TranscriptionHistoryRecording = TranscriptionHistoryRecorder(),
+        soundFeedback: any SoundFeedbackPlaying = SoundFeedbackService(),
         recorderFactory: @escaping RecorderFactory = { AudioRecorder(sampleRateHz: $0) },
         statusMenuFactory: @escaping StatusMenuFactory = { openSettings, openConfig, quit in
             StatusMenuController(
@@ -66,15 +86,21 @@ final class AppCoordinator {
                 quitHandler: quit
             )
         },
-        pipelineFactory: @escaping PipelineFactory = { transcriptionConfig, authClient in
+        pipelineFactory: @escaping PipelineFactory = { transcriptionConfig, authManager, attemptPolicy in
             DictationPipeline(
                 transcriber: ChatGPTTranscriber(
-                    authClient: authClient,
-                    config: transcriptionConfig
+                    authManager: authManager,
+                    config: transcriptionConfig,
+                    cloudflareChallengeMaxAttempts: attemptPolicy.cloudflareChallengeMaxAttempts
                 ),
                 normalizer: TerminologyNormalizer(),
-                importedEntries: transcriptionConfig.terminology.enabled ? transcriptionConfig.terminology.importedEntries : [],
-                hintTerms: transcriptionConfig.hintTerms
+                importedEntries: transcriptionConfig.activeDictionaryEntries,
+                hintTerms: transcriptionConfig.hintTerms,
+                textPolisher: OpenAICompatibleTextPolisher(
+                    config: transcriptionConfig.textPolish,
+                    chatGPTAuthProvider: authManager,
+                    chatGPTAuthAvailable: authManager.authSnapshot().state == .ready
+                )
             )
         },
         launchAppContextProvider: @escaping LaunchAppContextProvider = { LaunchAppContext.current() }
@@ -85,14 +111,28 @@ final class AppCoordinator {
         self.injector = injector
         let resolvedOverlay = overlay ?? OverlayController()
         self.overlay = resolvedOverlay
-        self.authClient = authClient
+        self.authManager = authManager
         self.latencyRecorder = latencyRecorder
+        self.historyRecorder = historyRecorder
+        self.soundFeedback = soundFeedback
         self.recorderFactory = recorderFactory
         self.statusMenuFactory = statusMenuFactory
         self.pipelineFactory = pipelineFactory
         self.launchAppContextProvider = launchAppContextProvider
         self.overlay.onCancel = { [weak self] in
             self?.cancelCurrentSession()
+        }
+        self.overlay.onRetry = { [weak self] in
+            self?.retryPendingTranscription()
+        }
+        authStateObserver = NotificationCenter.default.addObserver(
+            forName: .chatGPTAuthStateDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshReadyState()
+            }
         }
     }
 
@@ -114,10 +154,11 @@ final class AppCoordinator {
             )
 
             switch launchMode {
-            case .normal:
+            case .normal, .settings:
                 config = try configStore.load()
                 recorder = recorderFactory(config.transcription.sampleRateHz)
                 refreshReadyState()
+                checkLaunchLoginState()
                 prewarmAuthIfNeeded()
 
                 hotkeyMonitor = try HotkeyMonitor(keyCode: config.transcription.hotkeyKeyCode) { [weak self] in
@@ -126,9 +167,16 @@ final class AppCoordinator {
                     }
                 }
                 notifier.ensureAuthorization()
+                if launchMode == .settings {
+                    openSettings()
+                }
             case .overlayDemo:
                 config = (try? configStore.load()) ?? config
                 runOverlayDemo()
+                return
+            case .overlayDemoState(let demoState):
+                config = (try? configStore.load()) ?? config
+                runOverlayDemoState(demoState)
                 return
             case .benchmark:
                 config = try configStore.load()
@@ -137,7 +185,7 @@ final class AppCoordinator {
                     do {
                         let runner = BenchmarkRunner(
                             config: config,
-                            authClient: authClient
+                            authManager: authManager
                         )
                         try await runner.run()
                     } catch {
@@ -174,6 +222,7 @@ final class AppCoordinator {
         processingTask?.cancel()
         processingTask = nil
         stopRecordingLevelUpdates()
+        clearPendingRetry()
 
         if state == .recording {
             try? recorder?.cancelRecording()
@@ -190,6 +239,7 @@ final class AppCoordinator {
     private func startRecording() {
         guard let recorder else { return }
 
+        clearPendingRetry()
         logger.info("Start recording requested from hotkey")
         let sessionID = UUID()
         activeSessionID = sessionID
@@ -209,7 +259,8 @@ final class AppCoordinator {
 
                 let issues = RuntimePreflight.issues(
                     for: self.config,
-                    environment: ProcessInfo.processInfo.environment
+                    environment: ProcessInfo.processInfo.environment,
+                    authSnapshotProvider: { self.authManager.authSnapshot() }
                 )
                 if let message = RuntimePreflight.summary(for: issues) {
                     logger.error("Runtime preflight blocked recording with \(issues.count, privacy: .public) issue(s): \(message, privacy: .public)")
@@ -235,6 +286,7 @@ final class AppCoordinator {
                 self.state = .recording
                 self.statusMenu?.update(state: .recording, detail: "Recording on F5")
                 self.overlay.showRecording(elapsedText: "00:00")
+                self.soundFeedback.play(.recordingStarted, enabled: self.config.transcription.feedbackSoundsEnabled)
                 self.startRecordingLevelUpdates()
             } catch is CancellationError {
                 self.cancelCurrentSession()
@@ -267,108 +319,20 @@ final class AppCoordinator {
             state = .processing
             statusMenu?.update(state: .processing, detail: "Processing")
             overlay.showProcessing()
+            soundFeedback.play(.recordingStopped, enabled: config.transcription.feedbackSoundsEnabled)
 
             let transcriptionConfig = config.transcription
             let injectionConfig = config.injection
-            let processingStarted = DispatchTime.now().uptimeNanoseconds
             let launchAppContext = self.launchAppContext
-
-            processingTask?.cancel()
-            processingTask = Task { [weak self] in
-                guard let self else { return }
-                defer {
-                    try? FileManager.default.removeItem(at: audio.fileURL)
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        if self.activeSessionID == sessionID || self.activeSessionID == nil {
-                            self.processingTask = nil
-                        }
-                    }
-                }
-
-                let pipeline = self.pipelineFactory(transcriptionConfig, self.authClient)
-
-                do {
-                    let prepared = try await pipeline.prepare(audio: audio)
-                    guard !Task.isCancelled else { return }
-
-                    await MainActor.run {
-                        guard self.shouldContinue(sessionID: sessionID) else { return }
-
-                        do {
-                            let injectStarted = DispatchTime.now().uptimeNanoseconds
-                            let outcome = try self.injector.inject(
-                                text: prepared.finalText,
-                                preserveClipboard: injectionConfig.preserveClipboard,
-                                restoreDelayMilliseconds: injectionConfig.restoreDelayMilliseconds,
-                                launchAppContext: launchAppContext
-                            )
-                            let injectMs = self.elapsedMilliseconds(since: injectStarted)
-                            let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
-                            self.recordLatency(
-                                prepared: prepared,
-                                outcome: outcome,
-                                injectMs: injectMs,
-                                totalProcessingMs: totalProcessingMs,
-                                errorCategory: nil
-                            )
-                            self.state = .idle
-                            self.activeSessionID = nil
-                            self.statusMenu?.update(
-                                state: .ready,
-                                detail: self.statusDetail(for: outcome)
-                            )
-                            self.overlay.showResult(text: prepared.finalText, outcome: outcome)
-                            self.launchAppContext = nil
-                        } catch {
-                            let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
-                            self.recordLatency(
-                                prepared: prepared,
-                                outcome: nil,
-                                injectMs: 0,
-                                totalProcessingMs: totalProcessingMs,
-                                errorCategory: "inject"
-                            )
-                            self.state = .idle
-                            self.activeSessionID = nil
-                            self.statusMenu?.update(state: .error, detail: error.localizedDescription)
-                            self.overlay.showError(error.localizedDescription)
-                            self.notifier.notify(title: "ChatType", body: error.localizedDescription)
-                            self.launchAppContext = nil
-                        }
-                    }
-                } catch is CancellationError {
-                    return
-                } catch {
-                    guard !Task.isCancelled else { return }
-
-                    await MainActor.run {
-                        guard self.shouldContinue(sessionID: sessionID) else { return }
-
-                        let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
-                        let sample = LatencySample(
-                            timestamp: Date(),
-                            audioDurationMs: audio.durationMs,
-                            audioBytes: (try? Data(contentsOf: audio.fileURL).count) ?? 0,
-                            provider: transcriptionConfig.provider.rawValue,
-                            authMs: 0,
-                            transcribeMs: 0,
-                            normalizationMs: 0,
-                            injectMs: 0,
-                            totalProcessingMs: totalProcessingMs,
-                            resultStatus: "error",
-                            errorCategory: "transcribe"
-                        )
-                        try? self.latencyRecorder.record(sample)
-                        self.state = .idle
-                        self.activeSessionID = nil
-                        self.statusMenu?.update(state: .error, detail: error.localizedDescription)
-                        self.overlay.showError(error.localizedDescription)
-                        self.notifier.notify(title: "ChatType", body: error.localizedDescription)
-                        self.launchAppContext = nil
-                    }
-                }
-            }
+            startProcessing(
+                audio: audio,
+                sessionID: sessionID,
+                transcriptionConfig: transcriptionConfig,
+                injectionConfig: injectionConfig,
+                launchAppContext: launchAppContext,
+                attemptPolicy: .automatic,
+                deleteAudioWhenFinished: true
+            )
         } catch {
             stopRecordingLevelUpdates()
             state = .idle
@@ -380,10 +344,175 @@ final class AppCoordinator {
         }
     }
 
+    private func retryPendingTranscription() {
+        guard state == .idle, let pendingRetry else {
+            NSSound.beep()
+            return
+        }
+
+        let sessionID = UUID()
+        activeSessionID = sessionID
+        state = .processing
+        statusMenu?.update(state: .processing, detail: "Retrying")
+        overlay.showProcessing()
+
+        startProcessing(
+            audio: pendingRetry.audio,
+            sessionID: sessionID,
+            transcriptionConfig: pendingRetry.transcriptionConfig,
+            injectionConfig: pendingRetry.injectionConfig,
+            launchAppContext: pendingRetry.launchAppContext,
+            attemptPolicy: .manualRetry,
+            deleteAudioWhenFinished: false
+        )
+    }
+
+    private func startProcessing(
+        audio: RecordedAudio,
+        sessionID: UUID,
+        transcriptionConfig: TranscriptionConfig,
+        injectionConfig: InjectionConfig,
+        launchAppContext: LaunchAppContext?,
+        attemptPolicy: TranscriptionAttemptPolicy,
+        deleteAudioWhenFinished: Bool
+    ) {
+        let processingStarted = DispatchTime.now().uptimeNanoseconds
+
+        processingTask?.cancel()
+        processingTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if deleteAudioWhenFinished {
+                    try? FileManager.default.removeItem(at: audio.fileURL)
+                }
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if self.activeSessionID == sessionID || self.activeSessionID == nil {
+                        self.processingTask = nil
+                    }
+                }
+            }
+
+            let pipeline = self.pipelineFactory(transcriptionConfig, self.authManager, attemptPolicy)
+
+            do {
+                let prepared = try await pipeline.prepare(audio: audio)
+                guard !Task.isCancelled else { return }
+
+                await MainActor.run {
+                    guard self.shouldContinue(sessionID: sessionID) else { return }
+
+                    do {
+                        let injectStarted = DispatchTime.now().uptimeNanoseconds
+                        let outcome = try self.injector.inject(
+                            text: prepared.finalText,
+                            preserveClipboard: injectionConfig.preserveClipboard,
+                            restoreDelayMilliseconds: injectionConfig.restoreDelayMilliseconds,
+                            launchAppContext: launchAppContext
+                        )
+                        let injectMs = self.elapsedMilliseconds(since: injectStarted)
+                        let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
+                        self.recordLatency(
+                            prepared: prepared,
+                            outcome: outcome,
+                            injectMs: injectMs,
+                            totalProcessingMs: totalProcessingMs,
+                            errorCategory: nil
+                        )
+                        self.recordHistory(
+                            prepared: prepared,
+                            outcome: outcome,
+                            launchAppContext: launchAppContext
+                        )
+                        self.clearPendingRetry()
+                        self.state = .idle
+                        self.activeSessionID = nil
+                        self.statusMenu?.update(
+                            state: .ready,
+                            detail: self.statusDetail(for: outcome)
+                        )
+                        self.overlay.showResult(text: prepared.finalText, outcome: outcome)
+                        self.launchAppContext = nil
+                    } catch {
+                        let totalProcessingMs = self.elapsedMilliseconds(since: processingStarted)
+                        self.recordLatency(
+                            prepared: prepared,
+                            outcome: nil,
+                            injectMs: 0,
+                            totalProcessingMs: totalProcessingMs,
+                            errorCategory: "inject"
+                        )
+                        self.clearPendingRetry()
+                        self.state = .idle
+                        self.activeSessionID = nil
+                        self.statusMenu?.update(state: .error, detail: error.localizedDescription)
+                        self.overlay.showError(error.localizedDescription)
+                        self.notifier.notify(title: "ChatType", body: error.localizedDescription)
+                        self.launchAppContext = nil
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+
+                await MainActor.run {
+                    guard self.shouldContinue(sessionID: sessionID) else { return }
+
+                    self.recordTranscriptionFailure(
+                        audio: audio,
+                        transcriptionConfig: transcriptionConfig,
+                        processingStarted: processingStarted
+                    )
+
+                    if self.isRetryableTranscriptionError(error) {
+                        do {
+                            try self.storePendingRetry(
+                                audio: audio,
+                                launchAppContext: launchAppContext,
+                                transcriptionConfig: transcriptionConfig,
+                                injectionConfig: injectionConfig
+                            )
+                            self.state = .idle
+                            self.activeSessionID = nil
+                            self.statusMenu?.update(state: .error, detail: error.localizedDescription)
+                            self.overlay.showRetryableError(error.localizedDescription)
+                            self.notifier.notify(title: "ChatType", body: error.localizedDescription)
+                            self.launchAppContext = nil
+                        } catch {
+                            self.clearPendingRetry()
+                            self.state = .idle
+                            self.activeSessionID = nil
+                            self.statusMenu?.update(state: .error, detail: error.localizedDescription)
+                            self.overlay.showError(error.localizedDescription)
+                            self.notifier.notify(title: "ChatType", body: error.localizedDescription)
+                            self.launchAppContext = nil
+                        }
+                    } else {
+                        self.clearPendingRetry()
+                        self.state = .idle
+                        self.activeSessionID = nil
+                        self.statusMenu?.update(state: .error, detail: error.localizedDescription)
+                        self.overlay.showError(error.localizedDescription)
+                        self.notifier.notify(title: "ChatType", body: error.localizedDescription)
+                        self.launchAppContext = nil
+                    }
+                }
+            }
+        }
+    }
+
     private func openSettings() {
         if preferencesWindowController == nil {
+            let authManager: ChatGPTAuthManager
+            if let concrete = self.authManager as? ChatGPTAuthManager {
+                authManager = concrete
+            } else {
+                authManager = ChatGPTAuthManager()
+            }
             preferencesWindowController = PreferencesWindowController(
                 config: config,
+                authManager: authManager,
                 onSave: { [weak self] newConfig in
                     guard let self else { return }
                     do {
@@ -411,6 +540,10 @@ final class AppCoordinator {
                         let imported = try TypeWhisperTerminologyImporter().importEntries()
                         var updatedConfig = currentConfig
                         updatedConfig.transcription.terminology.enabled = true
+                        updatedConfig.transcription.terminology.entries = Self.mergedTerminologyEntries(
+                            existing: updatedConfig.transcription.terminology.entries,
+                            incoming: imported.entries
+                        )
                         updatedConfig.transcription.terminology.importedEntries = imported.entries
                         updatedConfig.transcription.terminology.lastImportedSource = imported.source
                         updatedConfig.transcription.terminology.lastImportedAt = imported.importedAt
@@ -427,6 +560,44 @@ final class AppCoordinator {
                         return .failure(error)
                     }
                 },
+                onRefreshTerminologySuggestions: { [weak self] currentConfig in
+                    guard let self else {
+                        return .failure(
+                            NSError(
+                                domain: "ChatType.Preferences",
+                                code: 1,
+                                userInfo: [NSLocalizedDescriptionKey: "ChatType settings are no longer available."]
+                            )
+                        )
+                    }
+
+                    do {
+                        let records = try self.historyRecorder.loadRecent(limit: 200)
+                        let suggestions = TerminologyLearner().suggestions(
+                            from: records,
+                            existingEntries: currentConfig.transcription.terminology.entries
+                                .filter { $0.type != .suggestion }
+                        )
+                        var updatedConfig = currentConfig
+                        updatedConfig.transcription.terminology.entries.removeAll { $0.type == .suggestion }
+                        updatedConfig.transcription.terminology.entries.append(contentsOf: suggestions)
+                        try self.configStore.save(updatedConfig)
+                        self.config = updatedConfig
+                        self.refreshReadyState(
+                            detailOverride: "Found \(suggestions.count) terminology suggestion(s)",
+                            state: .ready
+                        )
+                        return .success(updatedConfig)
+                    } catch {
+                        return .failure(error)
+                    }
+                },
+                onLoadRecentHistory: { [weak self] in
+                    guard let self else {
+                        return []
+                    }
+                    return (try? self.historyRecorder.loadRecent(limit: 200)) ?? []
+                },
                 onOpenConfigFolder: { [weak self] in
                     self?.openConfigFolder()
                 }
@@ -440,6 +611,46 @@ final class AppCoordinator {
         let directoryURL = configStore.directoryURL
         try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         NSWorkspace.shared.open(directoryURL)
+    }
+
+    func checkLaunchLoginState() {
+        guard config.transcription.provider == .chatGPTManagedAuth else {
+            return
+        }
+
+        let snapshot = authManager.authSnapshot()
+        guard snapshot.state != .ready else {
+            return
+        }
+
+        statusMenu?.update(state: .setupRequired, detail: snapshot.detail)
+        notifier.notify(title: "ChatType setup required", body: snapshot.detail)
+    }
+
+    private static func mergedTerminologyEntries(
+        existing: [TerminologyEntry],
+        incoming: [TerminologyEntry]
+    ) -> [TerminologyEntry] {
+        var output = existing
+        var keys = Set(existing.map(terminologyEntryKey(_:)))
+
+        for entry in incoming {
+            let key = terminologyEntryKey(entry)
+            guard keys.insert(key).inserted else {
+                continue
+            }
+            output.append(entry)
+        }
+
+        return output
+    }
+
+    private static func terminologyEntryKey(_ entry: TerminologyEntry) -> String {
+        [
+            entry.type.rawValue,
+            entry.original.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current),
+            (entry.replacement ?? "").folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current),
+        ].joined(separator: "|")
     }
 
     private func showInstallRequiredAlert(message: String) {
@@ -522,7 +733,34 @@ final class AppCoordinator {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             self.overlay.showError("Clipboard only")
 
-            try? await Task.sleep(nanoseconds: 2_400_000_000)
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            self.overlay.showRetryableError("403 after 3 tries")
+
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            NSApplication.shared.terminate(nil)
+        }
+    }
+
+    private func runOverlayDemoState(_ demoState: OverlayDemoState) {
+        state = .processing
+        statusMenu?.update(state: .demo, detail: "Overlay demo")
+
+        switch demoState {
+        case .recording:
+            overlay.showRecording(elapsedText: "00:07")
+            overlay.updateRecording(level: 0.72, elapsedText: "00:07")
+        case .processing:
+            overlay.showProcessing()
+        case .result:
+            overlay.showResult(text: "Demo", outcome: .pasted)
+        case .error:
+            overlay.showError("Clipboard only")
+        case .retryableError:
+            overlay.showRetryableError("403 after 3 tries")
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
             NSApplication.shared.terminate(nil)
         }
     }
@@ -573,13 +811,81 @@ final class AppCoordinator {
     }
 
     private func prewarmAuthIfNeeded() {
-        guard config.transcription.provider == .codexChatGPTBridge else {
+        guard config.transcription.provider == .chatGPTManagedAuth else {
             return
         }
 
-        Task.detached(priority: .utility) { [authClient] in
-            try? authClient.prewarmChatGPTStatus()
+        let authManager = self.authManager
+        Task.detached(priority: .utility) {
+            await authManager.prewarmSession()
         }
+    }
+
+    private func storePendingRetry(
+        audio: RecordedAudio,
+        launchAppContext: LaunchAppContext?,
+        transcriptionConfig: TranscriptionConfig,
+        injectionConfig: InjectionConfig
+    ) throws {
+        if pendingRetry?.audio.fileURL == audio.fileURL {
+            pendingRetry = PendingRetry(
+                audio: audio,
+                launchAppContext: launchAppContext,
+                transcriptionConfig: transcriptionConfig,
+                injectionConfig: injectionConfig
+            )
+            return
+        }
+
+        clearPendingRetry()
+        let retryDirectory = configStore.directoryURL.appendingPathComponent("Retry", isDirectory: true)
+        try FileManager.default.createDirectory(at: retryDirectory, withIntermediateDirectories: true)
+        let retryURL = retryDirectory.appendingPathComponent("retry-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: audio.fileURL, to: retryURL)
+        pendingRetry = PendingRetry(
+            audio: RecordedAudio(fileURL: retryURL, durationMs: audio.durationMs),
+            launchAppContext: launchAppContext,
+            transcriptionConfig: transcriptionConfig,
+            injectionConfig: injectionConfig
+        )
+    }
+
+    private func clearPendingRetry() {
+        if let pendingRetry {
+            try? FileManager.default.removeItem(at: pendingRetry.audio.fileURL)
+        }
+        pendingRetry = nil
+    }
+
+    private func isRetryableTranscriptionError(_ error: Error) -> Bool {
+        if case TranscriptionError.retryableCloudflareChallenge = error {
+            return true
+        }
+        return false
+    }
+
+    private func recordTranscriptionFailure(
+        audio: RecordedAudio,
+        transcriptionConfig: TranscriptionConfig,
+        processingStarted: UInt64
+    ) {
+        let sample = LatencySample(
+            timestamp: Date(),
+            audioDurationMs: audio.durationMs,
+            audioBytes: (try? Data(contentsOf: audio.fileURL).count) ?? 0,
+            provider: transcriptionConfig.provider.rawValue,
+            authMs: 0,
+            transcribeMs: 0,
+            normalizationMs: 0,
+            polishMs: 0,
+            estimatedPolishInputTokens: 0,
+            estimatedPolishOutputTokens: 0,
+            injectMs: 0,
+            totalProcessingMs: elapsedMilliseconds(since: processingStarted),
+            resultStatus: "error",
+            errorCategory: "transcribe"
+        )
+        try? latencyRecorder.record(sample)
     }
 
     private func recordLatency(
@@ -594,15 +900,39 @@ final class AppCoordinator {
             audioDurationMs: prepared.metrics.transcription.audioDurationMs,
             audioBytes: prepared.metrics.transcription.audioBytes,
             provider: prepared.metrics.transcription.provider.rawValue,
+            textPolishProvider: prepared.metrics.textPolishProvider?.rawValue,
             authMs: prepared.metrics.transcription.authMs,
             transcribeMs: prepared.metrics.transcription.transcribeMs,
             normalizationMs: prepared.metrics.normalizationMs,
+            polishMs: prepared.metrics.polishMs,
+            textPolishAttempted: prepared.metrics.textPolishAttempted,
+            textPolishError: prepared.metrics.textPolishErrorMessage,
+            estimatedPolishInputTokens: prepared.metrics.estimatedPolishInputTokens,
+            estimatedPolishOutputTokens: prepared.metrics.estimatedPolishOutputTokens,
             injectMs: injectMs,
             totalProcessingMs: totalProcessingMs,
             resultStatus: latencyResultStatus(for: outcome),
             errorCategory: errorCategory
         )
         try? latencyRecorder.record(sample)
+    }
+
+    private func recordHistory(
+        prepared: PreparedDictation,
+        outcome: InjectionOutcome,
+        launchAppContext: LaunchAppContext?
+    ) {
+        try? historyRecorder.record(
+            TranscriptionHistoryRecord(
+                timestamp: Date(),
+                rawText: prepared.rawText,
+                finalText: prepared.finalText,
+                appName: launchAppContext?.localizedName,
+                appBundleIdentifier: launchAppContext?.bundleIdentifier,
+                outcome: latencyResultStatus(for: outcome),
+                textPolishProvider: prepared.metrics.textPolishProvider?.rawValue
+            )
+        )
     }
 
     private func latencyResultStatus(for outcome: InjectionOutcome?) -> String {
@@ -629,7 +959,8 @@ final class AppCoordinator {
     private func refreshReadyState(detailOverride: String? = nil, state: StatusMenuVisualState = .ready) {
         let issues = RuntimePreflight.issues(
             for: config,
-            environment: ProcessInfo.processInfo.environment
+            environment: ProcessInfo.processInfo.environment,
+            authSnapshotProvider: { self.authManager.authSnapshot() }
         )
         if let detailOverride {
             statusMenu?.update(state: state, detail: detailOverride)

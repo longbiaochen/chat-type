@@ -60,6 +60,9 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$RESOURCES_DIR"
 swift build --package-path "$ROOT"
 cp "$BUILD_DIR/$APP_NAME" "$EXECUTABLE"
 chmod +x "$EXECUTABLE"
+if [[ -d "$ROOT/Sources/ChatType/Resources" ]]; then
+  cp -R "$ROOT/Sources/ChatType/Resources/." "$RESOURCES_DIR/"
+fi
 swift "$ROOT/scripts/render_app_icon.swift" "$ICONSET_DIR"
 /usr/bin/iconutil -c icns "$ICONSET_DIR" -o "$ICON_FILE"
 
@@ -91,7 +94,7 @@ cat >"$PLIST" <<PLIST
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>ChatType records short dictation clips and sends them through your local ChatGPT desktop login path.</string>
+  <string>ChatType records short dictation clips and sends them through its own ChatGPT account session.</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>

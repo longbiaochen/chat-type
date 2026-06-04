@@ -1,6 +1,6 @@
 cask "chattype" do
-  version "0.1.2"
-  sha256 "7c7678669b5c39ecbdbfe3498de1a5766adb52363ffec562d06a898254fc503f"
+  version "0.5.1"
+  sha256 :no_check
 
   url "https://github.com/longbiaochen/chat-type/releases/download/v#{version}/ChatType-#{version}-macos-arm64.zip"
   name "ChatType"

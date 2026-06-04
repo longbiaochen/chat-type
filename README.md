@@ -2,7 +2,7 @@
 
 [中文说明](README.zh-CN.md)
 
-`ChatType` is a native macOS dictation app for people who already use ChatGPT through a local Codex desktop session and want the fastest possible `F5 -> speak -> paste` workflow.
+`ChatType` is a native macOS dictation app for people who want the fastest possible `F5 -> speak -> paste` workflow with ChatGPT on the same Mac.
 
 Public landing page: [longbiaochen.github.io/chat-type](https://longbiaochen.github.io/chat-type/)
 
@@ -10,28 +10,30 @@ It is intentionally opinionated:
 
 - global `F5` hotkey
 - native menu bar app
-- zero-config default route through your local Codex desktop login state
-- single-stage STT output tuned for direct paste
+- ChatGPT connection through the default browser OAuth flow with app-owned local session storage
+- ChatGPT ASR followed by optional AI text polish for long, agent-facing dictation
 - conservative paste behavior: only paste when an editable target is detected
 - clipboard fallback when paste is not safe, with the latest transcript kept available for manual `Cmd+V`
 - manual TypeWhisper terminology import for stronger post-STT term alignment
+- ChatGPT Auth-only AI text polish for long dictation, without a separate polish API key
 - optional advanced recovery route for OpenAI-compatible APIs
 
 ## Product Promise
 
 - No extra dictation subscription
-- No API key in the normal path
+- No API key required for the normal ASR path
+- Optional ChatGPT Auth text polish when you want long dictation rewritten into concise plans
 - No local model download or tuning
-- Install once, sign into Codex on this Mac, press `F5`, speak, and get text back
+- Install once, connect ChatGPT through the default browser, press `F5`, speak, and get text back
 
 ## Current Status
 
-`ChatType` `v0.1.2` is the current public release. `./scripts/package_app.sh` expects a stable local signing identity and emits a locally signed, non-notarized `.app` plus GitHub release `.zip` and `.dmg` artifacts.
+`ChatType` `v0.5.1` is the current public release. `./scripts/package_app.sh` expects a stable local signing identity and emits a locally signed, non-notarized `.app` plus GitHub release `.zip` and `.dmg` artifacts.
 
 ## How It Works
 
 1. Install `ChatType`
-2. Install the packaged app to `/Applications/ChatType.app`, then launch that installed copy on a Mac that already has Codex desktop installed and signed in with ChatGPT
+2. Install the packaged app to `/Applications/ChatType.app`, then launch that installed copy
 3. Grant microphone permission
 4. If microphone access was denied earlier, use `Open Microphone Settings` in `ChatType Settings`
 5. If you want auto-paste, use `Guide Accessibility Access` in `ChatType Settings`
@@ -39,11 +41,12 @@ It is intentionally opinionated:
 7. If `ChatType` still does not appear there, click `+` in Accessibility and add `/Applications/ChatType.app`
 8. Put the cursor in Notes, Mail, Slack, Codex, or another editable target
 9. Press `F5`, speak, press `F5` again
-10. `ChatType` sends the recording through the local login-state bridge to the ChatGPT backend transcription path
+10. `ChatType` sends the recording through its own ChatGPT session to the ChatGPT backend transcription path
 11. Optional: import a TypeWhisper terminology snapshot in Settings to strengthen post-STT technical-term alignment
-12. `ChatType` applies a deterministic local terminology-alignment pass plus any hidden exact `hintTerms`
-13. The result is pasted into the focused app only when an editable target is detected; otherwise it is left in the clipboard for manual `Cmd+V`
-14. Chinese output defaults to Simplified Chinese unless the original speech clearly asks for Traditional Chinese
+12. Optional: enable ChatGPT Auth text polish in Settings. It uses ChatType's stored ChatGPT session and does not require a separate polish API key
+13. `ChatType` applies terminology alignment, optional AI polish, and a final protective normalization pass
+14. The result is pasted into the focused app only when an editable target is detected; otherwise it is left in the clipboard for manual `Cmd+V`
+15. Chinese output defaults to Simplified Chinese unless the original speech clearly asks for Traditional Chinese
 
 ## Installation
 
@@ -96,7 +99,7 @@ This repo does not yet publish a dedicated Homebrew tap, but the cask file is ke
 ### Release Download
 
 - Releases: [github.com/longbiaochen/chat-type/releases](https://github.com/longbiaochen/chat-type/releases)
-- Current release page: [v0.1.2](https://github.com/longbiaochen/chat-type/releases/tag/v0.1.2)
+- Current release page: [v0.5.1](https://github.com/longbiaochen/chat-type/releases/tag/v0.5.1)
 
 ## Support Development
 
@@ -104,18 +107,24 @@ The preferred support path is GitHub Sponsors, but the public sponsor page is no
 
 ## TypeWhisper Terminology Import
 
-`ChatType` still avoids a second AI cleanup pass in the default product path.
-
-Instead, `v0.1.2` adds a deterministic terminology-alignment layer:
+`ChatType` keeps deterministic terminology alignment as the safety layer around optional AI polish:
 
 - import a TypeWhisper terminology snapshot from Settings with `Import from TypeWhisper`
 - keep the imported glossary as ChatType-owned local config
-- align tool names, product names, and technical terms after STT without another model call
+- align tool names, product names, and technical terms before and after the optional text-polish call
 - keep hidden `transcription.hintTerms` as exact-only preservation hints for filenames and other critical literals
+
+## AI Text Polish
+
+`v0.5.0` adds an optional post-ASR rewrite engine for long dictation. It is designed for agent-facing prompts: remove filler words, keep later corrections as the final intent, preserve glossary casing, and turn long speech into concise plan-like bullets when useful.
+
+The polish path is intentionally separate from ASR but uses the same ChatType-managed ChatGPT login. Settings exposes the ChatGPT backend Responses endpoint and model for inspection, but no DeepSeek, Kimi, OpenAI, or custom polish API key is stored or used.
 
 ## Advanced Recovery Route
 
-If the desktop-login path is unavailable, `ChatType` still includes an advanced recovery route for OpenAI-compatible transcription APIs.
+If the ChatGPT account path is unavailable or you intentionally want a separate endpoint, `ChatType` still includes an advanced recovery route for OpenAI-compatible transcription APIs.
+
+The normal ChatGPT account route treats Cloudflare `403` from the private ChatGPT transcription endpoint as a retryable network fluctuation: it does not treat the ChatType session as expired, it tries the private request up to three times, and if all attempts fail it keeps the recorded audio and shows a Retry button in the HUD.
 
 That route is intentionally not part of the default onboarding. It requires:
 
@@ -172,21 +181,21 @@ Advanced terminology options:
 
 ## Risks And Boundaries
 
-`ChatType` V1 deliberately depends on a private backend path plus a local signed-in Codex desktop session.
+`ChatType` V1 deliberately depends on a private backend path plus a ChatType-managed local ChatGPT session.
 
 That means:
 
-- it is fast and simple for existing ChatGPT desktop users
-- it may break if upstream desktop-login or backend behavior changes
+- it is fast and simple for existing ChatGPT users
+- it may break if upstream ChatGPT Web session or backend behavior changes
 - it is not positioned as an enterprise-safe or long-term stable public API integration
-- the desktop bridge prompt path is opportunistic and falls back to plain transcription if unsupported
+- the private backend prompt path is opportunistic and falls back to plain transcription if unsupported
 
 ## Docs
 
 - [中文说明](README.zh-CN.md)
 - [Architecture](docs/architecture.md)
 - [Release Process](docs/release.md)
-- [Release Notes](docs/releases/v0.1.2.md)
+- [Release Notes](docs/releases/v0.5.1.md)
 - [Product PRD](docs/chattype-v1-prd.md)
 - [Promotion Kit](docs/promotion/README.md)
 

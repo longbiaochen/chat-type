@@ -45,7 +45,7 @@ Do not post every channel at the same moment. Each post should point to the same
 
 - Platform: Zhihu or Juejin first; mirror to the other after feedback
 - Copy: `long-form-article.md`, then adapt platform opening and ending
-- CTA: invite users who already use macOS + ChatGPT/Codex Desktop to test
+- CTA: invite users who already use macOS + ChatGPT to test
 - Track: comments, collections, GitHub referral traffic if available
 
 ## Day 6: Xiaohongshu Builder Story
@@ -63,9 +63,9 @@ Do not post every channel at the same moment. Each post should point to the same
   2. "现在把光标放在输入框，按 F5。"
   3. "说完再按 F5。"
   4. "能粘贴就直接回填，不能粘贴就留在剪贴板。"
-  5. "项目开源，面向已登录 ChatGPT/Codex Desktop 的 Mac 用户。"
+  5. "项目开源，面向已经在用 ChatGPT 的 Mac 用户。"
 - Title:
-  > 给 Mac + ChatGPT/Codex 做了一个 F5 语音输入工具
+  > 给 Mac + ChatGPT 做了一个 F5 语音输入工具
 - Track: completion rate, comments, GitHub visits
 
 ## After Day 7

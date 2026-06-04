@@ -2,6 +2,25 @@
 
 ## Next
 
+- Removed the stale provider-key fallback matrix from shipped config and Settings; AI Polish is ChatGPT Auth only
+
+## 0.5.1
+
+- Fixed AI Polish requests against the ChatGPT-backed Codex Responses endpoint by using the supported streaming, non-stored request shape
+- Added visible AI Polish attempt, success, and failure accounting so Settings no longer hides backend failures as ordinary ASR runs
+- Updated release metadata for `v0.5.1`
+
+## 0.5.0
+
+- Added a hybrid post-ASR text-polish pipeline for long dictation: ASR output is normalized, optionally rewritten by a configured text model, then normalized again before paste
+- Added ChatGPT Auth-only text polish for long dictation, without separate provider API keys
+- Reworked Settings into a workflow sidebar with Account, Dictation, AI Polish, Terminology, Paste, and Advanced sections
+- Added token-estimate metadata for text polish in Settings and latency logs
+- Increased terminology recall for accented Latin ASR drift while continuing to protect technical literals
+- Updated release metadata for `v0.5.0`
+
+- Added ChatType-owned ChatGPT sign-in and Keychain-backed local session storage so the default route no longer depends on Codex login state
+- Added bounded recovery for private ChatGPT transcription failures: Cloudflare `403` now skips token refresh, tries the private endpoint up to three times, keeps the recorded audio on failure, and exposes a HUD Retry action
 - Defaulted `Restore clipboard after paste` to off so the latest transcript stays available for manual `Cmd+V` recovery
 - Tightened paste safety so ChatType only reports `Pasted transcript` when an editable focus signal exists; otherwise it leaves the transcript in the clipboard
 - Added regression coverage for Codex placeholder artifacts and no-focus clipboard fallback behavior
@@ -16,7 +35,7 @@
 ## 0.1.0
 
 - Established `ChatType` as the launch product name across the app, packaging, and docs
-- Made the local Codex desktop login-state route the default transcription path
+- Made the local ChatGPT account route the default transcription path
 - Simplified the main product to a single-stage STT flow instead of a second cleanup pass
 - Added fixed transcription prompting plus hidden `transcription.hintTerms` for term preservation
 - Added desktop-auth warm caching and per-dictation latency logging

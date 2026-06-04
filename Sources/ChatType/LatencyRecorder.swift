@@ -5,13 +5,57 @@ struct LatencySample: Codable, Sendable, Equatable {
     let audioDurationMs: Int
     let audioBytes: Int
     let provider: String
+    let textPolishProvider: String?
     let authMs: Int
     let transcribeMs: Int
     let normalizationMs: Int
+    let polishMs: Int
+    let textPolishAttempted: Bool?
+    let textPolishError: String?
+    let estimatedPolishInputTokens: Int
+    let estimatedPolishOutputTokens: Int
     let injectMs: Int
     let totalProcessingMs: Int
     let resultStatus: String
     let errorCategory: String?
+
+    init(
+        timestamp: Date,
+        audioDurationMs: Int,
+        audioBytes: Int,
+        provider: String,
+        textPolishProvider: String? = nil,
+        authMs: Int,
+        transcribeMs: Int,
+        normalizationMs: Int,
+        polishMs: Int = 0,
+        textPolishAttempted: Bool? = nil,
+        textPolishError: String? = nil,
+        estimatedPolishInputTokens: Int = 0,
+        estimatedPolishOutputTokens: Int = 0,
+        injectMs: Int,
+        totalProcessingMs: Int,
+        resultStatus: String,
+        errorCategory: String?
+    ) {
+        self.timestamp = timestamp
+        self.audioDurationMs = audioDurationMs
+        self.audioBytes = audioBytes
+        self.provider = provider
+        self.textPolishProvider = textPolishProvider
+        self.authMs = authMs
+        self.transcribeMs = transcribeMs
+        self.normalizationMs = normalizationMs
+        self.polishMs = polishMs
+        self.textPolishAttempted = textPolishAttempted
+        self.textPolishError = textPolishError
+        self.estimatedPolishInputTokens = estimatedPolishInputTokens
+        self.estimatedPolishOutputTokens = estimatedPolishOutputTokens
+        self.injectMs = injectMs
+        self.totalProcessingMs = totalProcessingMs
+        self.resultStatus = resultStatus
+        self.errorCategory = errorCategory
+    }
 }
 
 protocol LatencyRecording: Sendable {

@@ -1,11 +1,6 @@
 import ApplicationServices
 import Foundation
 
-struct FocusedEditableTextTarget {
-    let element: AXUIElement
-    let snapshot: EditableTextSnapshot
-}
-
 enum FocusedElementInspector {
     private static let textRoles: Set<String> = [
         kAXTextFieldRole as String,
@@ -63,27 +58,6 @@ enum FocusedElementInspector {
         ) == .success
     }
 
-    static func editableTextTarget() -> FocusedEditableTextTarget? {
-        guard AXIsProcessTrusted(), let element = focusedElement() else {
-            return nil
-        }
-
-        return editableTextTarget(for: element)
-    }
-
-    static func editableTextTarget(in launchAppContext: LaunchAppContext?) -> FocusedEditableTextTarget? {
-        guard
-            AXIsProcessTrusted(),
-            let launchAppContext,
-            launchAppContext.processIdentifier > 0,
-            let element = preferredFocusedElement(in: launchAppContext)
-        else {
-            return nil
-        }
-
-        return editableTextTarget(for: element)
-    }
-
     private static func focusedElement(in launchAppContext: LaunchAppContext) -> AXUIElement? {
         let appElement = AXUIElementCreateApplication(launchAppContext.processIdentifier)
         var focusedElement: CFTypeRef?
@@ -101,7 +75,8 @@ enum FocusedElementInspector {
     }
 
     private static func preferredFocusedElement(in launchAppContext: LaunchAppContext) -> AXUIElement? {
-        if let element = focusedElement(in: launchAppContext) {
+        if let element = focusedElement(in: launchAppContext),
+           isEditableTextFocus(element) {
             return element
         }
 
@@ -171,63 +146,6 @@ enum FocusedElementInspector {
         return (value as? [AXUIElement]) ?? []
     }
 
-    private static func editableTextTarget(for element: AXUIElement) -> FocusedEditableTextTarget? {
-        guard hasDirectTextRole(element) else {
-            return nil
-        }
-
-        guard
-            isAttributeSettable(kAXValueAttribute, on: element),
-            isAttributeSettable(kAXSelectedTextRangeAttribute, on: element),
-            let value = stringValue(for: kAXValueAttribute, on: element),
-            let selectedRange = selectedRangeValue(on: element)
-        else {
-            return nil
-        }
-
-        return FocusedEditableTextTarget(
-            element: element,
-            snapshot: EditableTextSnapshot(
-                value: value,
-                selectedRange: selectedRange
-            )
-        )
-    }
-
-    private static func hasDirectTextRole(_ element: AXUIElement) -> Bool {
-        var roleValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleValue) == .success,
-              let role = roleValue as? String else {
-            return false
-        }
-
-        return textRoles.contains(role)
-    }
-
-    static func apply(
-        mutation: DirectTextMutation,
-        to target: FocusedEditableTextTarget
-    ) -> Bool {
-        var updatedSelectedRange = mutation.updatedSelectedRange
-        guard
-            let selectedRangeValue = AXValueCreate(.cfRange, &updatedSelectedRange),
-            AXUIElementSetAttributeValue(
-                target.element,
-                kAXValueAttribute as CFString,
-                mutation.updatedValue as CFTypeRef
-            ) == .success,
-            AXUIElementSetAttributeValue(
-                target.element,
-                kAXSelectedTextRangeAttribute as CFString,
-                selectedRangeValue
-            ) == .success
-        else {
-            return false
-        }
-
-        return true
-    }
-
     private static func focusedElement() -> AXUIElement? {
         let systemWideElement = AXUIElementCreateSystemWide()
         var focusedElement: CFTypeRef?
@@ -259,39 +177,4 @@ enum FocusedElementInspector {
         ) == .success && settable.boolValue
     }
 
-    private static func stringValue(
-        for attribute: String,
-        on element: AXUIElement
-    ) -> String? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
-            return nil
-        }
-        return value as? String
-    }
-
-    private static func selectedRangeValue(on element: AXUIElement) -> CFRange? {
-        var selectedTextRange: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            element,
-            kAXSelectedTextRangeAttribute as CFString,
-            &selectedTextRange
-        ) == .success,
-        let selectedTextRange,
-        CFGetTypeID(selectedTextRange) == AXValueGetTypeID()
-        else {
-            return nil
-        }
-
-        let axValue = selectedTextRange as! AXValue
-        guard AXValueGetType(axValue) == .cfRange else {
-            return nil
-        }
-
-        var range = CFRange()
-        guard AXValueGetValue(axValue, .cfRange, &range) else {
-            return nil
-        }
-        return range
-    }
 }
