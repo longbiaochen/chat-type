@@ -39,6 +39,7 @@ private final class FakeCoordinatorRecorder: RecordingControlling {
 private final class FakeCoordinatorOverlay: OverlayControlling {
     var onCancel: (@MainActor () -> Void)?
     var onRetry: (@MainActor () -> Void)?
+    var onOpenRecovery: (@MainActor () -> Void)?
     var onShowProcessing: (@MainActor () -> Void)?
     private(set) var hideCallCount = 0
     private(set) var recordingElapsedTexts: [String] = []
@@ -185,6 +186,26 @@ private final class FakeLatencyRecorder: LatencyRecording, @unchecked Sendable {
     }
 }
 
+private final class FakeRecoveryRecorder: RecoveryRecording, @unchecked Sendable {
+    let directoryURL: URL
+    private let lock = NSLock()
+    private(set) var inputs: [RecoveryRecordInput] = []
+
+    init(directoryURL: URL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)) {
+        self.directoryURL = directoryURL
+    }
+
+    func record(_ input: RecoveryRecordInput) throws {
+        lock.lock()
+        inputs.append(input)
+        lock.unlock()
+    }
+
+    func loadRecent(limit: Int) throws -> [RecoveryRecord] {
+        []
+    }
+}
+
 private enum ScriptedCoordinatorPipelineOutcome: Sendable {
     case success(String)
     case retryableCloudflare(Int)
@@ -245,6 +266,94 @@ private struct ScriptedCoordinatorPipeline: DictationPreparing {
     func prepare(audio: RecordedAudio) async throws -> PreparedDictation {
         try script.prepare(audio: audio)
     }
+}
+
+@Test
+@MainActor
+func successfulProcessingRecordsRecoverableAudioASRAndPolish() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let originalAudioURL = root.appendingPathComponent("original.wav")
+    try Data("saved-audio".utf8).write(to: originalAudioURL)
+
+    let recorder = FakeCoordinatorRecorder()
+    recorder.nextAudio = RecordedAudio(fileURL: originalAudioURL, durationMs: 1_000)
+    let overlay = FakeCoordinatorOverlay()
+    let statusMenu = FakeCoordinatorStatusMenu()
+    let injector = FakeCoordinatorInjector()
+    let recoveryRecorder = FakeRecoveryRecorder()
+    let script = CoordinatorPipelineScript(outcomes: [.success("final text")])
+    let coordinator = AppCoordinator(
+        configStore: ConfigStore(fileManager: .default, homeDirectoryURL: root),
+        config: AppConfig(),
+        notifier: FakeCoordinatorNotifier(),
+        injector: injector,
+        overlay: overlay,
+        authManager: FakeChatGPTAuthManager(),
+        latencyRecorder: FakeLatencyRecorder(),
+        recoveryRecorder: recoveryRecorder,
+        recorderFactory: { _ in recorder },
+        statusMenuFactory: { _, _, _ in statusMenu },
+        pipelineFactory: { _, _, policy in script.makePipeline(policy: policy) }
+    )
+
+    coordinator.recorder = recorder
+    coordinator.statusMenu = statusMenu
+    coordinator.handleHotkeyPress()
+    await waitForCoordinatorState(coordinator, toBecome: .recording)
+    coordinator.handleHotkeyPress()
+    await waitForCondition { injector.injectCallCount == 1 }
+
+    #expect(recoveryRecorder.inputs.count == 1)
+    #expect(recoveryRecorder.inputs[0].sourceAudioURL == originalAudioURL)
+    #expect(recoveryRecorder.inputs[0].asrText == "final text")
+    #expect(recoveryRecorder.inputs[0].polishText == "final text")
+    #expect(recoveryRecorder.inputs[0].outcome == "pasted")
+}
+
+@Test
+@MainActor
+func retryableTranscriptionFailureRecordsRecoverableAudioAndError() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let originalAudioURL = root.appendingPathComponent("original.wav")
+    try Data("saved-audio".utf8).write(to: originalAudioURL)
+
+    let recorder = FakeCoordinatorRecorder()
+    recorder.nextAudio = RecordedAudio(fileURL: originalAudioURL, durationMs: 1_000)
+    let overlay = FakeCoordinatorOverlay()
+    let statusMenu = FakeCoordinatorStatusMenu()
+    let recoveryRecorder = FakeRecoveryRecorder()
+    let script = CoordinatorPipelineScript(outcomes: [.retryableCloudflare(3)])
+    let coordinator = AppCoordinator(
+        configStore: ConfigStore(fileManager: .default, homeDirectoryURL: root),
+        config: AppConfig(),
+        notifier: FakeCoordinatorNotifier(),
+        injector: FakeCoordinatorInjector(),
+        overlay: overlay,
+        authManager: FakeChatGPTAuthManager(),
+        latencyRecorder: FakeLatencyRecorder(),
+        recoveryRecorder: recoveryRecorder,
+        recorderFactory: { _ in recorder },
+        statusMenuFactory: { _, _, _ in statusMenu },
+        pipelineFactory: { _, _, policy in script.makePipeline(policy: policy) }
+    )
+
+    coordinator.recorder = recorder
+    coordinator.statusMenu = statusMenu
+    coordinator.handleHotkeyPress()
+    await waitForCoordinatorState(coordinator, toBecome: .recording)
+    coordinator.handleHotkeyPress()
+    await waitForCondition { overlay.retryableErrors.count == 1 }
+
+    #expect(recoveryRecorder.inputs.count == 1)
+    #expect(recoveryRecorder.inputs[0].sourceAudioURL == originalAudioURL)
+    #expect(recoveryRecorder.inputs[0].asrText == nil)
+    #expect(recoveryRecorder.inputs[0].polishText == nil)
+    #expect(recoveryRecorder.inputs[0].outcome == "error")
+    #expect(recoveryRecorder.inputs[0].errorMessage?.contains("403") == true)
 }
 
 @MainActor
@@ -696,11 +805,14 @@ struct AppCoordinatorCancellationTests {
         let retryDirectory = configStore.directoryURL.appendingPathComponent("Retry", isDirectory: true)
         let savedRetryFiles = (try? FileManager.default.contentsOfDirectory(atPath: retryDirectory.path)) ?? []
         #expect(savedRetryFiles.count == 1)
+        let recoveryStore = RecoveryStore(directoryURL: configStore.directoryURL.appendingPathComponent("Recovery", isDirectory: true))
+        #expect((try? recoveryStore.loadRecent(limit: 10).count) == 1)
 
         coordinator.handleHotkeyPress()
         let remainingRetryFiles = (try? FileManager.default.contentsOfDirectory(atPath: retryDirectory.path)) ?? []
 
         #expect(remainingRetryFiles.isEmpty)
+        #expect((try? recoveryStore.loadRecent(limit: 10).count) == 1)
         coordinator.cancelCurrentSession()
     }
 

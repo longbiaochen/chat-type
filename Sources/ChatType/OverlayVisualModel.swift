@@ -50,7 +50,7 @@ struct OverlayStylePreset: Sendable, Equatable {
         errorAutoHideDelay: 2.0,
         inlineCancelControlSize: 14,
         inlineControlGap: 5,
-        inlineControlReservedWidth: 20,
+        inlineControlReservedWidth: 42,
         timerWidth: 34,
         timerFontSize: 10,
         timerOpacity: 0.72
@@ -143,6 +143,15 @@ enum OverlayVisualState: Sendable, Equatable {
             return true
         }
         return false
+    }
+
+    var showsRecoveryControl: Bool {
+        switch self {
+        case .error, .retryableError:
+            return true
+        case .recording, .processing, .success:
+            return false
+        }
     }
 
     var trailingText: String? {
