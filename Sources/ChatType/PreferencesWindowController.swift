@@ -11,7 +11,6 @@ final class PreferencesWindowController: NSWindowController {
         onSave: @escaping (AppConfig) -> Void,
         onImportTypeWhisperTerminology: @escaping (AppConfig) -> Result<AppConfig, any Error>,
         onRefreshTerminologySuggestions: @escaping (AppConfig) -> Result<AppConfig, any Error>,
-        onLoadRecentHistory: @escaping () -> [TranscriptionHistoryRecord],
         onLoadRecoveryHistory: @escaping () -> [RecoveryRecord],
         recoveryDirectoryURL: URL,
         onRetryRecoveryRecord: @escaping (RecoveryRecord) -> Void,
@@ -24,7 +23,6 @@ final class PreferencesWindowController: NSWindowController {
             onSave: onSave,
             onImportTypeWhisperTerminology: onImportTypeWhisperTerminology,
             onRefreshTerminologySuggestions: onRefreshTerminologySuggestions,
-            onLoadRecentHistory: onLoadRecentHistory,
             onLoadRecoveryHistory: onLoadRecoveryHistory,
             recoveryDirectoryURL: recoveryDirectoryURL,
             onRetryRecoveryRecord: onRetryRecoveryRecord,
@@ -92,7 +90,7 @@ private struct TextPolishUsage: Equatable {
 private struct PreferencesView: View {
     private enum SettingsSection: String, CaseIterable, Identifiable {
         case account = "Account"
-        case dictation = "Dictation"
+        case processing = "Processing"
         case recovery = "History"
         case terminology = "Terminology"
         case paste = "Paste"
@@ -104,8 +102,8 @@ private struct PreferencesView: View {
             switch self {
             case .account:
                 return "person.crop.circle"
-            case .dictation:
-                return "mic.and.signal.meter"
+            case .processing:
+                return "waveform.and.magnifyingglass"
             case .recovery:
                 return "clock.arrow.circlepath"
             case .terminology:
@@ -144,7 +142,6 @@ private struct PreferencesView: View {
     @State private var textPolishUsage: [TextPolishProviderID: TextPolishUsage] = [:]
     @State private var textPolishMessage: String?
     @State private var textPolishMessageIsError = false
-    @State private var recentHistoryRecords: [TranscriptionHistoryRecord] = []
     @State private var recentRecoveryRecords: [RecoveryRecord] = []
     @State private var selectedRecoveryKind: RecoveryHistoryKind = .audio
     @State private var copiedHistoryItemID: String?
@@ -153,7 +150,6 @@ private struct PreferencesView: View {
     let onSave: (AppConfig) -> Void
     let onImportTypeWhisperTerminology: (AppConfig) -> Result<AppConfig, any Error>
     let onRefreshTerminologySuggestions: (AppConfig) -> Result<AppConfig, any Error>
-    let onLoadRecentHistory: () -> [TranscriptionHistoryRecord]
     let onLoadRecoveryHistory: () -> [RecoveryRecord]
     let recoveryDirectoryURL: URL
     let onRetryRecoveryRecord: (RecoveryRecord) -> Void
@@ -165,7 +161,6 @@ private struct PreferencesView: View {
         onSave: @escaping (AppConfig) -> Void,
         onImportTypeWhisperTerminology: @escaping (AppConfig) -> Result<AppConfig, any Error>,
         onRefreshTerminologySuggestions: @escaping (AppConfig) -> Result<AppConfig, any Error>,
-        onLoadRecentHistory: @escaping () -> [TranscriptionHistoryRecord],
         onLoadRecoveryHistory: @escaping () -> [RecoveryRecord],
         recoveryDirectoryURL: URL,
         onRetryRecoveryRecord: @escaping (RecoveryRecord) -> Void,
@@ -183,7 +178,6 @@ private struct PreferencesView: View {
         self.onSave = onSave
         self.onImportTypeWhisperTerminology = onImportTypeWhisperTerminology
         self.onRefreshTerminologySuggestions = onRefreshTerminologySuggestions
-        self.onLoadRecentHistory = onLoadRecentHistory
         self.onLoadRecoveryHistory = onLoadRecoveryHistory
         self.recoveryDirectoryURL = recoveryDirectoryURL
         self.onRetryRecoveryRecord = onRetryRecoveryRecord
@@ -303,7 +297,7 @@ private struct PreferencesView: View {
             authSnapshot = authManager.authSnapshot()
             browserBridgeSnapshot = authManager.browserBridgeSnapshot()
             refreshTextPolishStatus()
-            refreshRecentHistory()
+            refreshRecoveryHistory()
         }
         .onReceive(NotificationCenter.default.publisher(for: .chatGPTAuthStateDidChange)) { _ in
             authSnapshot = authManager.authSnapshot()
@@ -312,7 +306,7 @@ private struct PreferencesView: View {
         }
         .onAppear {
             refreshTextPolishStatus()
-            refreshRecentHistory()
+            refreshRecoveryHistory()
         }
     }
 
@@ -371,8 +365,8 @@ private struct PreferencesView: View {
         switch selectedSection {
         case .account:
             return "Connect ChatGPT, verify permissions, and keep the first-run flow healthy."
-        case .dictation:
-            return "Configure recording, ASR, and AI polish for the F5 workflow."
+        case .processing:
+            return "Configure the recording, ASR, and AI polish steps in the F5 workflow."
         case .recovery:
             return "Copy or retry recent audio, ASR, and AI-polished results."
         case .terminology:
@@ -389,8 +383,8 @@ private struct PreferencesView: View {
         switch selectedSection {
         case .account:
             accountOverviewCard
-        case .dictation:
-            dictationWorkflowCard
+        case .processing:
+            processingWorkflowCard
         case .recovery:
             recoveryHistoryCard
         case .terminology:
@@ -468,25 +462,8 @@ private struct PreferencesView: View {
         textPolishUsage = Self.loadTextPolishUsage()
     }
 
-    private func refreshRecentHistory() {
-        recentHistoryRecords = onLoadRecentHistory()
+    private func refreshRecoveryHistory() {
         recentRecoveryRecords = onLoadRecoveryHistory()
-    }
-
-    private var recentDictationHistoryItems: [TranscriptionHistoryPreview] {
-        TranscriptionHistoryPreview.recentItems(
-            from: recentHistoryRecords,
-            limit: 5,
-            textSource: .dictation
-        )
-    }
-
-    private var recentPolishHistoryItems: [TranscriptionHistoryPreview] {
-        TranscriptionHistoryPreview.recentItems(
-            from: recentHistoryRecords,
-            limit: 5,
-            textSource: .polish
-        )
     }
 
     private var recentRecoveryItems: [RecoveryHistoryPreview] {
@@ -549,7 +526,7 @@ private struct PreferencesView: View {
         }
     }
 
-    private var dictationWorkflowCard: some View {
+    private var processingWorkflowCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             dictationCard
             aiPolishCard
@@ -580,10 +557,6 @@ private struct PreferencesView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
-                historySection(
-                    title: "Recent Dictation History",
-                    textSource: .dictation
-                )
             }
         }
     }
@@ -664,10 +637,6 @@ private struct PreferencesView: View {
                 }
 
                 polishStatusSection
-                historySection(
-                    title: "Recent Polish History",
-                    textSource: .polish
-                )
             }
         }
     }
@@ -688,7 +657,7 @@ private struct PreferencesView: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button("Refresh") {
-                        refreshRecentHistory()
+                        refreshRecoveryHistory()
                     }
                     .buttonStyle(.bordered)
                 }
@@ -799,111 +768,6 @@ private struct PreferencesView: View {
         .padding(10)
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func historySection(
-        title: String,
-        textSource: TranscriptionHistoryTextSource
-    ) -> some View {
-        let items = textSource == .dictation ? recentDictationHistoryItems : recentPolishHistoryItems
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer()
-                Button("Refresh") {
-                    refreshRecentHistory()
-                }
-                .buttonStyle(.bordered)
-            }
-
-            if items.isEmpty {
-                Text("No recent transcripts yet.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 6)
-            } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(items) { item in
-                        recentHistoryRow(item)
-                    }
-                }
-            }
-        }
-    }
-
-    private func recentHistoryRow(_ item: TranscriptionHistoryPreview) -> some View {
-        let isCopied = copiedHistoryItemID == item.id
-
-        return HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(item.target)
-                        .font(.system(size: 11, weight: .medium))
-                    Text(item.sourceLabel)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    Text(item.outcome)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                    Text(item.timestamp.formatted(date: .numeric, time: .shortened))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                Text(item.text)
-                    .font(.system(size: 12))
-                    .textSelection(.enabled)
-                    .lineLimit(2)
-                    .foregroundStyle(.primary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: 6) {
-                if isCopied {
-                    Text("Copied")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.green)
-                        .transition(.opacity)
-                }
-
-                Button {
-                    copyRecentHistoryItem(item)
-                } label: {
-                    Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                        .frame(width: 12, height: 12)
-                }
-                .help(isCopied ? "Copied" : "Copy transcript")
-                .accessibilityLabel(isCopied ? "Copied transcript" : "Copy transcript")
-                .disabled(item.copyText.isEmpty)
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-            .frame(width: 74, alignment: .trailing)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func copyRecentHistoryItem(_ item: TranscriptionHistoryPreview) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(item.copyText, forType: .string)
-
-        withAnimation(.easeOut(duration: 0.12)) {
-            copiedHistoryItemID = item.id
-        }
-
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.6))
-            guard copiedHistoryItemID == item.id else {
-                return
-            }
-            withAnimation(.easeOut(duration: 0.18)) {
-                copiedHistoryItemID = nil
-            }
-        }
     }
 
     private func copyRecoveryHistoryItem(_ item: RecoveryHistoryPreview) {

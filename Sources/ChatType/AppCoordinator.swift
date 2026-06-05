@@ -614,12 +614,6 @@ final class AppCoordinator {
                         return .failure(error)
                     }
                 },
-                onLoadRecentHistory: { [weak self] in
-                    guard let self else {
-                        return []
-                    }
-                    return (try? self.historyRecorder.loadRecent(limit: 200)) ?? []
-                },
                 onLoadRecoveryHistory: { [weak self] in
                     guard let self else {
                         return []
