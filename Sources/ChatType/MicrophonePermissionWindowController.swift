@@ -13,7 +13,7 @@ final class MicrophonePermissionWindowController: NSWindowController, NSWindowDe
         let hostingController = NSHostingController(rootView: view)
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 250),
+            contentRect: NSRect(origin: .zero, size: MicrophonePermissionWindowLayout.contentSize),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -21,6 +21,8 @@ final class MicrophonePermissionWindowController: NSWindowController, NSWindowDe
         window.title = "Enable Microphone Access"
         window.isReleasedWhenClosed = false
         window.isRestorable = false
+        window.contentMinSize = MicrophonePermissionWindowLayout.contentSize
+        window.minSize = window.frameRect(forContentRect: NSRect(origin: .zero, size: MicrophonePermissionWindowLayout.contentSize)).size
         window.center()
         window.level = .normal
         window.contentViewController = hostingController
@@ -53,8 +55,13 @@ final class MicrophonePermissionWindowController: NSWindowController, NSWindowDe
     }
 
     func show() {
-        window?.center()
-        window?.makeKeyAndOrderFront(nil)
+        guard let window else {
+            return
+        }
+
+        window.setContentSize(MicrophonePermissionWindowLayout.contentSize)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
         NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -72,6 +79,10 @@ final class MicrophonePermissionWindowController: NSWindowController, NSWindowDe
         window?.orderOut(nil)
         completion(decision)
     }
+}
+
+enum MicrophonePermissionWindowLayout {
+    static let contentSize = NSSize(width: 520, height: 250)
 }
 
 private struct MicrophonePermissionView: View {
@@ -105,7 +116,11 @@ private struct MicrophonePermissionView: View {
             }
         }
         .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(
+            width: MicrophonePermissionWindowLayout.contentSize.width,
+            height: MicrophonePermissionWindowLayout.contentSize.height,
+            alignment: .topLeading
+        )
         .background(Color(nsColor: .windowBackgroundColor))
     }
 }
