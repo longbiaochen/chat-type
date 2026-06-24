@@ -6,6 +6,7 @@ import Foundation
 protocol OverlayControlling: AnyObject {
     var onCancel: (@MainActor () -> Void)? { get set }
     var onRetry: (@MainActor () -> Void)? { get set }
+    var onOpenRecovery: (@MainActor () -> Void)? { get set }
 
     func showRecording(elapsedText: String)
     func updateRecording(level: CGFloat, elapsedText: String)
@@ -28,6 +29,7 @@ final class OverlayController: OverlayControlling {
     private let iconView = NSImageView()
     private let closeButton = OverlayHitTargetButton()
     private let retryButton = OverlayHitTargetButton()
+    private let recoveryButton = OverlayHitTargetButton()
     private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
     private let trailingTimerLabel = NSTextField(labelWithString: "")
@@ -41,10 +43,12 @@ final class OverlayController: OverlayControlling {
     private var escapeHotkeyMonitor: HotkeyMonitor?
     var onCancel: (@MainActor () -> Void)?
     var onRetry: (@MainActor () -> Void)?
+    var onOpenRecovery: (@MainActor () -> Void)?
 
     init(
         onCancel: (@MainActor () -> Void)? = nil,
-        onRetry: (@MainActor () -> Void)? = nil
+        onRetry: (@MainActor () -> Void)? = nil,
+        onOpenRecovery: (@MainActor () -> Void)? = nil
     ) {
         displayedLevels = Array(
             repeating: WaveformNormalizer.minimumVisibleLevel,
@@ -71,6 +75,7 @@ final class OverlayController: OverlayControlling {
         panel.ignoresMouseEvents = false
         self.onCancel = onCancel
         self.onRetry = onRetry
+        self.onOpenRecovery = onOpenRecovery
 
         configureViews()
     }
@@ -155,7 +160,10 @@ final class OverlayController: OverlayControlling {
         detailLabel.isHidden = !state.allowsSupplementaryText
         trailingTimerLabel.stringValue = state.trailingText ?? ""
         trailingTimerLabel.isHidden = state.trailingText == nil
-        trailingAccessoryStack.isHidden = !state.showsCancelControl && !state.showsRetryControl && state.trailingText == nil
+        trailingAccessoryStack.isHidden = !state.showsCancelControl
+            && !state.showsRetryControl
+            && !state.showsRecoveryControl
+            && state.trailingText == nil
         updateSessionControls(for: state)
 
         switch state {
@@ -268,7 +276,7 @@ final class OverlayController: OverlayControlling {
             guard let self else {
                 return []
             }
-            return [self.closeButton, self.retryButton]
+            return [self.closeButton, self.retryButton, self.recoveryButton]
         }
         panel.contentView = panelRootView
         panelRootView.addSubview(backgroundView)
@@ -351,11 +359,25 @@ final class OverlayController: OverlayControlling {
         retryButton.focusRingType = .none
         retryButton.isHidden = true
 
+        recoveryButton.translatesAutoresizingMaskIntoConstraints = false
+        recoveryButton.isBordered = false
+        recoveryButton.bezelStyle = .regularSquare
+        recoveryButton.image = NSImage(systemSymbolName: "list.bullet.rectangle", accessibilityDescription: "Open recovery history")
+        recoveryButton.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
+        recoveryButton.imagePosition = .imageOnly
+        recoveryButton.contentTintColor = ChatTypePalette.mistMuted.withAlphaComponent(0.84)
+        recoveryButton.target = self
+        recoveryButton.action = #selector(handleRecoveryControlPressed)
+        recoveryButton.setButtonType(.momentaryChange)
+        recoveryButton.focusRingType = .none
+        recoveryButton.isHidden = true
+
         trailingAccessoryStack.translatesAutoresizingMaskIntoConstraints = false
         trailingAccessoryStack.orientation = .horizontal
         trailingAccessoryStack.spacing = style.inlineControlGap
         trailingAccessoryStack.alignment = .centerY
         trailingAccessoryStack.addArrangedSubview(trailingTimerLabel)
+        trailingAccessoryStack.addArrangedSubview(recoveryButton)
         trailingAccessoryStack.addArrangedSubview(retryButton)
         trailingAccessoryStack.addArrangedSubview(closeButton)
 
@@ -399,6 +421,8 @@ final class OverlayController: OverlayControlling {
             trailingAccessoryStack.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor, constant: -style.contentPaddingH),
             trailingAccessoryStack.centerYAnchor.constraint(equalTo: backgroundView.centerYAnchor),
             trailingTimerLabel.widthAnchor.constraint(equalToConstant: style.timerWidth),
+            recoveryButton.widthAnchor.constraint(equalToConstant: style.inlineCancelControlSize),
+            recoveryButton.heightAnchor.constraint(equalToConstant: style.inlineCancelControlSize),
             retryButton.widthAnchor.constraint(equalToConstant: style.inlineCancelControlSize),
             retryButton.heightAnchor.constraint(equalToConstant: style.inlineCancelControlSize),
             closeButton.widthAnchor.constraint(equalToConstant: style.inlineCancelControlSize),
@@ -453,6 +477,7 @@ final class OverlayController: OverlayControlling {
             closeButton.isHidden = true
         }
         retryButton.isHidden = !state.showsRetryControl
+        recoveryButton.isHidden = !state.showsRecoveryControl
     }
 
     private func activateEscapeHotkeyIfNeeded() {
@@ -468,6 +493,7 @@ final class OverlayController: OverlayControlling {
         escapeHotkeyMonitor = nil
         closeButton.isHidden = true
         retryButton.isHidden = true
+        recoveryButton.isHidden = true
     }
 
     @objc
@@ -478,6 +504,11 @@ final class OverlayController: OverlayControlling {
     @objc
     private func handleRetryControlPressed() {
         onRetry?()
+    }
+
+    @objc
+    private func handleRecoveryControlPressed() {
+        onOpenRecovery?()
     }
 
     @discardableResult
@@ -523,6 +554,7 @@ final class OverlayController: OverlayControlling {
             panelIgnoresMouseEvents: panel.ignoresMouseEvents,
             isCancelControlVisible: !closeButton.isHidden,
             isRetryControlVisible: !retryButton.isHidden,
+            isRecoveryControlVisible: !recoveryButton.isHidden,
             isTimerVisible: !trailingTimerLabel.isHidden
         )
     }
@@ -534,6 +566,7 @@ struct OverlayDebugSnapshot: Sendable, Equatable {
     let panelIgnoresMouseEvents: Bool
     let isCancelControlVisible: Bool
     let isRetryControlVisible: Bool
+    let isRecoveryControlVisible: Bool
     let isTimerVisible: Bool
 }
 
