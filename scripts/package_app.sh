@@ -22,13 +22,13 @@ resolve_signing_identity() {
   fi
 
   local resolved
-  resolved="$(security find-identity -v -p codesigning 2>/dev/null | awk -F '"' '/Apple Development:/ { print $2; exit }')"
+  resolved="$(security find-identity -v -p codesigning 2>/dev/null | awk -F '"' '/Developer ID Application:/ { print $2; exit }')"
   if [[ -n "$resolved" ]]; then
     printf '%s\n' "$resolved"
     return
   fi
 
-  resolved="$(security find-identity -v -p codesigning 2>/dev/null | awk -F '"' '/Developer ID Application:/ { print $2; exit }')"
+  resolved="$(security find-identity -v -p codesigning 2>/dev/null | awk -F '"' '/Apple Development:/ { print $2; exit }')"
   printf '%s\n' "$resolved"
 }
 
@@ -47,11 +47,13 @@ ARCH="$(uname -m)"
 ZIP_PATH="$ROOT/dist/${APP_NAME}-${CHATTYPE_VERSION}-macos-${ARCH}.zip"
 DMG_PATH="$ROOT/dist/${APP_NAME}-${CHATTYPE_VERSION}-macos-${ARCH}.dmg"
 DMG_STAGING_DIR="$ROOT/dist/.dmg-staging"
+DMG_RAW_PATH="$ROOT/dist/.${APP_NAME}-${CHATTYPE_VERSION}-macos-${ARCH}.raw.dmg"
 
 mkdir -p "$ROOT/dist"
 rm -rf "$APP_DIR"
 rm -f "$ZIP_PATH"
 rm -f "$DMG_PATH"
+rm -f "$DMG_RAW_PATH"
 rm -f "$ENTITLEMENTS_FILE"
 rm -rf "$DMG_STAGING_DIR"
 rm -rf "$ICONSET_DIR"
@@ -66,51 +68,51 @@ fi
 swift "$ROOT/scripts/render_app_icon.swift" "$ICONSET_DIR"
 /usr/bin/iconutil -c icns "$ICONSET_DIR" -o "$ICON_FILE"
 
-cat >"$PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleDevelopmentRegion</key>
-  <string>en</string>
-  <key>CFBundleExecutable</key>
-  <string>ChatType</string>
-  <key>CFBundleIdentifier</key>
-  <string>me.longbiaochen.chattype</string>
-  <key>CFBundleIconFile</key>
-  <string>AppIcon</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleDisplayName</key>
-  <string>ChatType</string>
-  <key>CFBundleName</key>
-  <string>ChatType</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleShortVersionString</key>
-  <string>${CHATTYPE_VERSION}</string>
-  <key>CFBundleVersion</key>
-  <string>${CHATTYPE_BUILD}</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>13.0</string>
-  <key>NSMicrophoneUsageDescription</key>
-  <string>ChatType records short dictation clips and sends them through its own ChatGPT account session.</string>
-  <key>NSPrincipalClass</key>
-  <string>NSApplication</string>
-</dict>
-</plist>
-PLIST
+{
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+  printf '%s\n' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+  printf '%s\n' '<plist version="1.0">'
+  printf '%s\n' '<dict>'
+  printf '%s\n' '  <key>CFBundleDevelopmentRegion</key>'
+  printf '%s\n' '  <string>en</string>'
+  printf '%s\n' '  <key>CFBundleExecutable</key>'
+  printf '%s\n' '  <string>ChatType</string>'
+  printf '%s\n' '  <key>CFBundleIdentifier</key>'
+  printf '%s\n' '  <string>me.longbiaochen.chattype</string>'
+  printf '%s\n' '  <key>CFBundleIconFile</key>'
+  printf '%s\n' '  <string>AppIcon</string>'
+  printf '%s\n' '  <key>CFBundleInfoDictionaryVersion</key>'
+  printf '%s\n' '  <string>6.0</string>'
+  printf '%s\n' '  <key>CFBundleDisplayName</key>'
+  printf '%s\n' '  <string>ChatType</string>'
+  printf '%s\n' '  <key>CFBundleName</key>'
+  printf '%s\n' '  <string>ChatType</string>'
+  printf '%s\n' '  <key>CFBundlePackageType</key>'
+  printf '%s\n' '  <string>APPL</string>'
+  printf '%s\n' '  <key>CFBundleShortVersionString</key>'
+  printf '  <string>%s</string>\n' "$CHATTYPE_VERSION"
+  printf '%s\n' '  <key>CFBundleVersion</key>'
+  printf '  <string>%s</string>\n' "$CHATTYPE_BUILD"
+  printf '%s\n' '  <key>LSMinimumSystemVersion</key>'
+  printf '%s\n' '  <string>13.0</string>'
+  printf '%s\n' '  <key>NSMicrophoneUsageDescription</key>'
+  printf '%s\n' '  <string>ChatType records short dictation clips and sends them through its own ChatGPT account session.</string>'
+  printf '%s\n' '  <key>NSPrincipalClass</key>'
+  printf '%s\n' '  <string>NSApplication</string>'
+  printf '%s\n' '</dict>'
+  printf '%s\n' '</plist>'
+} >"$PLIST"
 
-cat >"$ENTITLEMENTS_FILE" <<ENTITLEMENTS
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>com.apple.security.device.audio-input</key>
-  <true/>
-</dict>
-</plist>
-ENTITLEMENTS
+{
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+  printf '%s\n' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+  printf '%s\n' '<plist version="1.0">'
+  printf '%s\n' '<dict>'
+  printf '%s\n' '  <key>com.apple.security.device.audio-input</key>'
+  printf '%s\n' '  <true/>'
+  printf '%s\n' '</dict>'
+  printf '%s\n' '</plist>'
+} >"$ENTITLEMENTS_FILE"
 
 SIGNING_IDENTITY="$(resolve_signing_identity)"
 CODESIGN_ARGS=(--force)
@@ -132,15 +134,16 @@ fi
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "$ZIP_PATH"
 mkdir -p "$DMG_STAGING_DIR"
 cp -R "$APP_DIR" "$DMG_STAGING_DIR/"
-/usr/bin/hdiutil create \
-  -volname "$APP_NAME" \
-  -srcfolder "$DMG_STAGING_DIR" \
-  -ov \
-  -format UDZO \
-  "$DMG_PATH" >/dev/null
+/usr/bin/hdiutil makehybrid \
+  -hfs \
+  -hfs-volume-name "$APP_NAME" \
+  -o "$DMG_RAW_PATH" \
+  "$DMG_STAGING_DIR" >/dev/null
+/usr/bin/hdiutil convert "$DMG_RAW_PATH" -format UDZO -o "$DMG_PATH" >/dev/null
 rm -rf "$DMG_STAGING_DIR"
 rm -rf "$ICONSET_DIR"
 rm -f "$ENTITLEMENTS_FILE"
+rm -f "$DMG_RAW_PATH"
 
 echo "Packaged $APP_DIR"
 echo "Signed with $SIGNING_SUMMARY"

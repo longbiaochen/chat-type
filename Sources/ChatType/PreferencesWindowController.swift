@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import ApplicationServices
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class PreferencesWindowController: NSWindowController {
@@ -9,8 +10,7 @@ final class PreferencesWindowController: NSWindowController {
         config: AppConfig,
         authManager: ChatGPTAuthManager,
         onSave: @escaping (AppConfig) -> Void,
-        onImportTypeWhisperTerminology: @escaping (AppConfig) -> Result<AppConfig, any Error>,
-        onRefreshTerminologySuggestions: @escaping (AppConfig) -> Result<AppConfig, any Error>,
+        onImportTerminologyDictionary: @escaping (AppConfig, URL) -> Result<AppConfig, any Error>,
         onLoadRecentHistory: @escaping () -> [TranscriptionHistoryRecord],
         onOpenConfigFolder: @escaping () -> Void
     ) {
@@ -18,8 +18,7 @@ final class PreferencesWindowController: NSWindowController {
             initialConfig: config,
             authManager: authManager,
             onSave: onSave,
-            onImportTypeWhisperTerminology: onImportTypeWhisperTerminology,
-            onRefreshTerminologySuggestions: onRefreshTerminologySuggestions,
+            onImportTerminologyDictionary: onImportTerminologyDictionary,
             onLoadRecentHistory: onLoadRecentHistory,
             onOpenConfigFolder: onOpenConfigFolder
         )
@@ -114,7 +113,6 @@ private struct PreferencesView: View {
         case all = "All"
         case terms = "Terms"
         case corrections = "Corrections"
-        case suggestions = "Suggestions"
 
         var id: String { rawValue }
     }
@@ -141,8 +139,7 @@ private struct PreferencesView: View {
 
     let authManager: ChatGPTAuthManager
     let onSave: (AppConfig) -> Void
-    let onImportTypeWhisperTerminology: (AppConfig) -> Result<AppConfig, any Error>
-    let onRefreshTerminologySuggestions: (AppConfig) -> Result<AppConfig, any Error>
+    let onImportTerminologyDictionary: (AppConfig, URL) -> Result<AppConfig, any Error>
     let onLoadRecentHistory: () -> [TranscriptionHistoryRecord]
     let onOpenConfigFolder: () -> Void
 
@@ -150,8 +147,7 @@ private struct PreferencesView: View {
         initialConfig: AppConfig,
         authManager: ChatGPTAuthManager,
         onSave: @escaping (AppConfig) -> Void,
-        onImportTypeWhisperTerminology: @escaping (AppConfig) -> Result<AppConfig, any Error>,
-        onRefreshTerminologySuggestions: @escaping (AppConfig) -> Result<AppConfig, any Error>,
+        onImportTerminologyDictionary: @escaping (AppConfig, URL) -> Result<AppConfig, any Error>,
         onLoadRecentHistory: @escaping () -> [TranscriptionHistoryRecord],
         onOpenConfigFolder: @escaping () -> Void
     ) {
@@ -163,8 +159,7 @@ private struct PreferencesView: View {
         _textPolishUsage = State(initialValue: Self.loadTextPolishUsage())
         self.authManager = authManager
         self.onSave = onSave
-        self.onImportTypeWhisperTerminology = onImportTypeWhisperTerminology
-        self.onRefreshTerminologySuggestions = onRefreshTerminologySuggestions
+        self.onImportTerminologyDictionary = onImportTerminologyDictionary
         self.onLoadRecentHistory = onLoadRecentHistory
         self.onOpenConfigFolder = onOpenConfigFolder
     }
@@ -477,8 +472,6 @@ private struct PreferencesView: View {
                 include = entry.type == .term
             case .corrections:
                 include = entry.type == .correction
-            case .suggestions:
-                include = entry.type == .suggestion
             }
             return include ? (offset: offset, entry: entry) : nil
         }
@@ -947,12 +940,10 @@ private struct PreferencesView: View {
         let entries = config.transcription.terminology.entries
         let termCount = entries.filter { $0.type == .term }.count
         let correctionCount = entries.filter { $0.type == .correction }.count
-        let suggestionCount = entries.filter { $0.type == .suggestion }.count
 
         return HStack(spacing: 8) {
             terminologyCountBadge(title: "Terms", count: termCount, color: .accentColor)
             terminologyCountBadge(title: "Corrections", count: correctionCount, color: .orange)
-            terminologyCountBadge(title: "Suggestions", count: suggestionCount, color: .secondary)
             Spacer()
             Text("Legacy `hintTerms` still works from config.json.")
                 .font(.system(size: 11))
@@ -986,29 +977,8 @@ private struct PreferencesView: View {
 
             Spacer()
 
-            Button("Import TypeWhisper") {
-                switch onImportTypeWhisperTerminology(config) {
-                case .success(let updatedConfig):
-                    config = updatedConfig
-                    terminologyImportMessage = Self.terminologyStatusMessage(for: updatedConfig)
-                    terminologyImportIsError = false
-                case .failure(let error):
-                    terminologyImportMessage = error.localizedDescription
-                    terminologyImportIsError = true
-                }
-            }
-
-            Button("Refresh Suggestions") {
-                switch onRefreshTerminologySuggestions(config) {
-                case .success(let updatedConfig):
-                    config = updatedConfig
-                    terminologyImportMessage = Self.terminologyStatusMessage(for: updatedConfig)
-                    terminologyImportIsError = false
-                    terminologyFilter = .suggestions
-                case .failure(let error):
-                    terminologyImportMessage = error.localizedDescription
-                    terminologyImportIsError = true
-                }
+            Button("Import Dictionary...") {
+                importTerminologyDictionary()
             }
         }
     }
@@ -1041,7 +1011,7 @@ private struct PreferencesView: View {
                     saveTerminologyEditor()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(editingOriginal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!canSaveTerminologyEntry)
             }
         }
         .padding(10)
@@ -1094,20 +1064,12 @@ private struct PreferencesView: View {
 
             Spacer()
 
-            if entry.type == .suggestion {
-                Button("Accept") {
-                    acceptSuggestion(at: index)
-                }
-                .buttonStyle(.bordered)
-            }
-
             Toggle("", isOn: Binding(
                 get: { config.transcription.terminology.entries[index].isEnabled },
                 set: { config.transcription.terminology.entries[index].isEnabled = $0 }
             ))
             .toggleStyle(.switch)
             .labelsHidden()
-            .disabled(entry.type == .suggestion)
 
             Button("Edit") {
                 editTerminologyEntry(at: index)
@@ -1128,17 +1090,9 @@ private struct PreferencesView: View {
     private func editTerminologyEntry(at index: Int) {
         let entry = config.transcription.terminology.entries[index]
         editingTerminologyIndex = index
-        editingTerminologyType = entry.type == .suggestion ? .term : entry.type
+        editingTerminologyType = entry.type
         editingOriginal = entry.original
         editingReplacement = entry.replacement ?? ""
-    }
-
-    private func acceptSuggestion(at index: Int) {
-        var entry = config.transcription.terminology.entries[index]
-        entry.type = .term
-        entry.isEnabled = true
-        entry.source = "user"
-        config.transcription.terminology.entries[index] = entry
     }
 
     private func saveTerminologyEditor() {
@@ -1175,6 +1129,43 @@ private struct PreferencesView: View {
         editingTerminologyType = .term
         editingOriginal = ""
         editingReplacement = ""
+    }
+
+    private var canSaveTerminologyEntry: Bool {
+        let original = editingOriginal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !original.isEmpty else {
+            return false
+        }
+
+        if editingTerminologyType == .correction {
+            return !editingReplacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        return true
+    }
+
+    private func importTerminologyDictionary() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.plainText, .commaSeparatedText]
+        panel.message = "Choose a plain text or CSV terminology dictionary."
+
+        guard panel.runModal() == .OK, let fileURL = panel.url else {
+            return
+        }
+
+        switch onImportTerminologyDictionary(config, fileURL) {
+        case .success(let updatedConfig):
+            config = updatedConfig
+            terminologyImportMessage = Self.terminologyStatusMessage(for: updatedConfig)
+            terminologyImportIsError = false
+            terminologyFilter = .all
+        case .failure(let error):
+            terminologyImportMessage = error.localizedDescription
+            terminologyImportIsError = true
+        }
     }
 
     private func settingsCard<Content: View>(

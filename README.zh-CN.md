@@ -14,7 +14,7 @@
 - ChatGPT ASR 后可选 AI 文本润色，面向长段、给 agent 的计划型输出
 - 回填策略保守：只有检测到可编辑目标时才粘贴，不行就留在剪贴板
 - 默认保留最后一次转写结果在剪贴板里，方便光标丢失时手动 `Cmd+V`
-- 支持手动导入 TypeWhisper 术语表，增强术语对齐
+- 支持手动导入文本/CSV 词库，并添加自定义术语和修正
 - 长句 AI 文本润色只走 ChatGPT Auth，不需要单独的润色 API key
 - `OpenAI-Compatible Recovery` 只作为高级恢复路径
 
@@ -42,7 +42,7 @@
 8. 把光标放到 Notes、Mail、Slack、Codex 等可编辑位置
 9. 按一次 `F5` 开始录音，再按一次 `F5` 结束录音
 10. `ChatType` 通过自己维护的 ChatGPT 会话把音频送到 ChatGPT 转写路径
-11. 可选：在设置页里导入一份 TypeWhisper 术语快照，增强 STT 后的术语对齐
+11. 可选：在设置页里导入文本/CSV 词库，增强 STT 后的术语对齐
 12. 可选：在设置页启用 ChatGPT Auth 文本润色；它使用 ChatType 已保存的 ChatGPT 会话，不需要单独的润色 API key
 13. `ChatType` 会先做术语对齐，再按需 AI 润色，最后再做保护性术语归一化
 14. 只有检测到可编辑目标时，结果才会直接回填到当前输入位置；否则保留在剪贴板，方便手动 `Cmd+V`
@@ -104,12 +104,13 @@ packaging/homebrew/Casks/chattype.rb
 
 首选支持入口是 GitHub Sponsors，但这个账号的公开 sponsor 页面还没有启用。在入口正式可用前，最有效的支持是试用 release、给仓库 star，并用 issue 反馈安装阻塞或工作流问题。
 
-## TypeWhisper 术语导入
+## 术语词库
 
 `ChatType` 保留本地确定性术语对齐，并把它作为 AI 润色前后的安全层：
 
-- 在设置页里点 `Import from TypeWhisper`，导入一份 TypeWhisper 术语快照
-- 导入后的词表由 ChatType 自己保存在本地配置里，不依赖运行时一直读取 TypeWhisper
+- 在设置页里点 `Import Dictionary...`，导入文本或 CSV 词库
+- 在设置页里添加自定义术语和确定性修正
+- 导入后的词表由 ChatType 自己保存在本地配置里
 - 在 STT 和可选 AI 润色之后，对工具名、产品名和技术术语做本地对齐
 - `transcription.hintTerms` 仍然保留，用于文件名等关键字的 exact-only 保留
 
@@ -160,8 +161,9 @@ swift test --package-path .
 
 术语相关的高级选项：
 
-- 在设置页中用 `Import from TypeWhisper` 导入 TypeWhisper 术语
-- 用 `transcription.hintTerms` 保留不想被改动的 exact-only 自定义术语
+- 在设置页中用 `Import Dictionary...` 导入文本或 CSV 词库
+- 在设置页里添加自定义术语和修正
+- 用 `transcription.hintTerms` 保留不想被改动的 exact-only 隐藏术语
 
 ## 权限修复
 

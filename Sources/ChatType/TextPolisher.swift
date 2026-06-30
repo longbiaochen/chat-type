@@ -131,7 +131,7 @@ struct TextPolishPromptBuilder: Sendable {
         var seen = Set<String>()
         var count = 0
 
-        for entry in terminologyEntries where entry.isEnabled && entry.type != .suggestion {
+        for entry in terminologyEntries where entry.isEnabled {
             let aliases = entry.aliases.isEmpty ? "" : " aliases: \(entry.aliases.joined(separator: ", "))"
             let line = "\(entry.canonical)\(aliases)"
             let key = line.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)

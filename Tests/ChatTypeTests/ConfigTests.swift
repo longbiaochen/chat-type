@@ -90,7 +90,7 @@ func defaultConfigEncodesTerminologyDefaults() throws {
 
     #expect(terminology["enabled"] as? Bool == true)
     #expect((terminology["entries"] as? [Any])?.isEmpty == true)
-    #expect((terminology["importedEntries"] as? [Any])?.isEmpty == true)
+    #expect(terminology["importedEntries"] == nil)
     #expect(terminology["lastImportedSource"] == nil)
     #expect(terminology["lastImportedAt"] == nil)
 }
@@ -174,13 +174,13 @@ func legacyConfigWithoutFeedbackSoundSettingDefaultsToEnabled() throws {
 }
 
 @Test
-func configRoundTripPreservesImportedTerminologyEntries() throws {
+func configRoundTripPreservesTerminologyEntries() throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
     var config = AppConfig()
-    config.transcription.terminology.importedEntries = [
+    config.transcription.terminology.entries = [
         TerminologyEntry(
             canonical: "TypeWhisper",
             aliases: ["Type Whisper", "Takwiisper"]
@@ -200,9 +200,9 @@ func configRoundTripPreservesImportedTerminologyEntries() throws {
 
     let decoded = try JSONDecoder().decode(AppConfig.self, from: Data(contentsOf: configURL))
     #expect(decoded.transcription.terminology.enabled == true)
-    #expect(decoded.transcription.terminology.importedEntries.count == 2)
-    #expect(decoded.transcription.terminology.importedEntries[0].canonical == "TypeWhisper")
-    #expect(decoded.transcription.terminology.importedEntries[0].aliases == ["Type Whisper", "Takwiisper"])
+    #expect(decoded.transcription.terminology.entries.count == 2)
+    #expect(decoded.transcription.terminology.entries[0].canonical == "TypeWhisper")
+    #expect(decoded.transcription.terminology.entries[0].aliases == ["Type Whisper", "Takwiisper"])
     #expect(decoded.transcription.terminology.lastImportedSource == "/Users/test/Library/Application Support/TypeWhisper/dictionary.store")
     #expect(decoded.transcription.terminology.lastImportedAt == "2026-04-19T10:00:00Z")
 }
@@ -252,12 +252,12 @@ func configRoundTripPreservesUserDictionaryEntryFields() throws {
             createdAt: "2026-05-07T10:00:00Z"
         ),
         TerminologyEntry(
-            type: .suggestion,
+            type: .term,
             original: "TypeWhisper",
             replacement: nil,
             aliases: [],
-            isEnabled: false,
-            source: "auto-suggestion",
+            isEnabled: true,
+            source: "user",
             usageCount: 4,
             createdAt: "2026-05-07T10:01:00Z"
         ),
@@ -272,6 +272,32 @@ func configRoundTripPreservesUserDictionaryEntryFields() throws {
 
     #expect(decoded.transcription.terminology.entries == config.transcription.terminology.entries)
     #expect(entries.allSatisfy { $0["caseSensitive"] == nil })
+    #expect(entries.allSatisfy { ($0["type"] as? String) != "suggestion" })
+}
+
+@Test
+func legacySuggestionDictionaryEntryDecodesAsTerm() throws {
+    let json = """
+    {
+      "type": "suggestion",
+      "original": "TypeWhisper",
+      "replacement": null,
+      "aliases": [],
+      "isEnabled": false,
+      "source": "auto-suggestion",
+      "usageCount": 4,
+      "createdAt": "2026-05-07T10:01:00Z"
+    }
+    """.data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(TerminologyEntry.self, from: json)
+    let encoded = try JSONEncoder().encode(decoded)
+    let encodedJSON = String(data: encoded, encoding: .utf8) ?? ""
+
+    #expect(decoded.type == .term)
+    #expect(decoded.original == "TypeWhisper")
+    #expect(decoded.source == "legacy-import")
+    #expect(encodedJSON.contains("suggestion") == false)
 }
 
 @Test
@@ -334,7 +360,7 @@ func legacyConfigWithoutTerminologyReencodesWithTerminologyDefaults() throws {
     let terminology = try #require(transcription["terminology"] as? [String: Any])
 
     #expect(terminology["enabled"] as? Bool == true)
-    #expect((terminology["importedEntries"] as? [Any])?.isEmpty == true)
+    #expect(terminology["importedEntries"] == nil)
 }
 
 @Test

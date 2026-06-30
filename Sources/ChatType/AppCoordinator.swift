@@ -525,7 +525,7 @@ final class AppCoordinator {
                         self.notifier.notify(title: "ChatType", body: error.localizedDescription)
                     }
                 },
-                onImportTypeWhisperTerminology: { [weak self] currentConfig in
+                onImportTerminologyDictionary: { [weak self] currentConfig, fileURL in
                     guard let self else {
                         return .failure(
                             NSError(
@@ -537,56 +537,27 @@ final class AppCoordinator {
                     }
 
                     do {
-                        let imported = try TypeWhisperTerminologyImporter().importEntries()
+                        let data = try Data(contentsOf: fileURL)
+                        let imported = try TerminologyTextImporter().importEntries(
+                            from: data,
+                            sourceName: fileURL.lastPathComponent
+                        )
                         var updatedConfig = currentConfig
                         updatedConfig.transcription.terminology.enabled = true
                         updatedConfig.transcription.terminology.entries = Self.mergedTerminologyEntries(
                             existing: updatedConfig.transcription.terminology.entries,
                             incoming: imported.entries
                         )
-                        updatedConfig.transcription.terminology.importedEntries = imported.entries
-                        updatedConfig.transcription.terminology.lastImportedSource = imported.source
+                        updatedConfig.transcription.terminology.lastImportedSource = fileURL.path
                         updatedConfig.transcription.terminology.lastImportedAt = imported.importedAt
 
                         try self.configStore.save(updatedConfig)
                         self.config = updatedConfig
                         self.refreshReadyState(
-                            detailOverride: "Imported \(imported.entries.count) TypeWhisper terms",
+                            detailOverride: "Imported \(imported.entries.count) terminology terms",
                             state: .ready
                         )
 
-                        return .success(updatedConfig)
-                    } catch {
-                        return .failure(error)
-                    }
-                },
-                onRefreshTerminologySuggestions: { [weak self] currentConfig in
-                    guard let self else {
-                        return .failure(
-                            NSError(
-                                domain: "ChatType.Preferences",
-                                code: 1,
-                                userInfo: [NSLocalizedDescriptionKey: "ChatType settings are no longer available."]
-                            )
-                        )
-                    }
-
-                    do {
-                        let records = try self.historyRecorder.loadRecent(limit: 200)
-                        let suggestions = TerminologyLearner().suggestions(
-                            from: records,
-                            existingEntries: currentConfig.transcription.terminology.entries
-                                .filter { $0.type != .suggestion }
-                        )
-                        var updatedConfig = currentConfig
-                        updatedConfig.transcription.terminology.entries.removeAll { $0.type == .suggestion }
-                        updatedConfig.transcription.terminology.entries.append(contentsOf: suggestions)
-                        try self.configStore.save(updatedConfig)
-                        self.config = updatedConfig
-                        self.refreshReadyState(
-                            detailOverride: "Found \(suggestions.count) terminology suggestion(s)",
-                            state: .ready
-                        )
                         return .success(updatedConfig)
                     } catch {
                         return .failure(error)

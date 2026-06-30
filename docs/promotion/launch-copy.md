@@ -184,7 +184,7 @@ Structure:
 3. Product choice: one global trigger, no floating feature pile.
 4. Safety choice: paste only into editable targets; clipboard fallback otherwise.
 5. Technical boundary: private desktop transcription path, not a public API promise.
-6. Current release: v0.1.2, TypeWhisper terminology import, GitHub release.
+6. Current release: v0.5.x, terminology dictionary import, custom corrections, GitHub release.
 7. Feedback request: F5 workflow, permission onboarding, paste behavior, terminology accuracy.
 
 ## Hacker News
@@ -247,7 +247,7 @@ Short description:
 
 Long description:
 
-> ChatType is an open-source macOS menu bar dictation app for people who already use ChatGPT. Press F5 to record, press F5 again to stop, then ChatType transcribes through its own ChatGPT session and pastes only when the focused target is editable. If paste is not safe, the transcript remains in the clipboard for manual Cmd+V. It also supports local TypeWhisper terminology import for deterministic post-transcription term alignment.
+> ChatType is an open-source macOS menu bar dictation app for people who already use ChatGPT. Press F5 to record, press F5 again to stop, then ChatType transcribes through its own ChatGPT session and pastes only when the focused target is editable. If paste is not safe, the transcript remains in the clipboard for manual Cmd+V. It also supports local terminology dictionary import and custom corrections for deterministic post-transcription term alignment.
 
 Pricing:
 

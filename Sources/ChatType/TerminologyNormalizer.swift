@@ -59,20 +59,23 @@ struct TerminologyNormalizer: TranscriptNormalizing {
         )
         output = correctionPass.text
         applied = applied || correctionPass.replacementCount > 0
+        let correctionReplacementKeys = protectedCorrectionReplacementKeys(from: importedEntries)
 
         let exactPass = applyExactRules(
             to: output,
             rules: exactRules(
                 importedEntries: importedEntries,
                 hintTerms: hintTerms
-            )
+            ),
+            protectedCanonicalKeys: correctionReplacementKeys
         )
         output = exactPass.text
         applied = applied || exactPass.replacementCount > 0
 
         let fuzzyPass = applyFuzzyRules(
             to: output,
-            rules: fuzzyRules(from: importedEntries)
+            rules: fuzzyRules(from: importedEntries),
+            protectedCanonicalKeys: correctionReplacementKeys
         )
         output = fuzzyPass.text
         applied = applied || fuzzyPass.replacementCount > 0
@@ -91,7 +94,8 @@ struct TerminologyNormalizer: TranscriptNormalizing {
 
     private func applyExactRules(
         to text: String,
-        rules: [ExactRule]
+        rules: [ExactRule],
+        protectedCanonicalKeys: Set<String> = []
     ) -> (text: String, replacementCount: Int) {
         var output = text
         var replacementCount = 0
@@ -114,6 +118,9 @@ struct TerminologyNormalizer: TranscriptNormalizing {
                 }
 
                 let matchedText = String(output[range])
+                guard !protectedCanonicalKeys.contains(canonicalKey(for: matchedText)) else {
+                    continue
+                }
                 guard matchedText != rule.canonical else {
                     continue
                 }
@@ -132,7 +139,8 @@ struct TerminologyNormalizer: TranscriptNormalizing {
 
     private func applyFuzzyRules(
         to text: String,
-        rules: [FuzzyRule]
+        rules: [FuzzyRule],
+        protectedCanonicalKeys: Set<String> = []
     ) -> FuzzyPassResult {
         guard !rules.isEmpty else {
             return FuzzyPassResult(text: text, replacementCount: 0)
@@ -168,6 +176,9 @@ struct TerminologyNormalizer: TranscriptNormalizing {
             }
 
             let candidate = String(output[range])
+            guard !protectedCanonicalKeys.contains(canonicalKey(for: candidate)) else {
+                continue
+            }
             guard let winner = bestFuzzyMatch(for: candidate, rules: rules) else {
                 continue
             }
@@ -380,7 +391,7 @@ struct TerminologyNormalizer: TranscriptNormalizing {
                     regex: regex,
                     sortKey: collapsedLatinSkeleton(for: term).count,
                     priority: priority,
-                    preserveMixedCaseFromLowercaseCanonical: true
+                    preserveMixedCaseFromLowercaseCanonical: false
                 )
             )
         }
@@ -408,6 +419,22 @@ struct TerminologyNormalizer: TranscriptNormalizing {
                 preserveMixedCaseFromLowercaseCanonical: true
             )
         }
+    }
+
+    private func protectedCorrectionReplacementKeys(from entries: [TerminologyEntry]) -> Set<String> {
+        Set(
+            entries
+                .filter { $0.isEnabled && $0.type == .correction }
+                .compactMap { entry in
+                    let replacement = (entry.replacement ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    return replacement.isEmpty ? nil : canonicalKey(for: replacement)
+                }
+        )
+    }
+
+    private func canonicalKey(for text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func shouldSkipFuzzyReference(_ term: String) -> Bool {

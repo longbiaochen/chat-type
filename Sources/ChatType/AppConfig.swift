@@ -210,7 +210,6 @@ struct TranscriptionConfig: Codable, Sendable {
 struct TerminologyConfig: Codable, Sendable, Equatable {
     var enabled: Bool = true
     var entries: [TerminologyEntry] = []
-    var importedEntries: [TerminologyEntry] = []
     var lastImportedSource: String?
     var lastImportedAt: String?
 
@@ -220,21 +219,45 @@ struct TerminologyConfig: Codable, Sendable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         let decodedEntries = try container.decodeIfPresent([TerminologyEntry].self, forKey: .entries) ?? []
-        importedEntries = try container.decodeIfPresent([TerminologyEntry].self, forKey: .importedEntries) ?? []
-        entries = decodedEntries.isEmpty ? importedEntries : decodedEntries
+        let legacyImportedEntries = try container.decodeIfPresent([TerminologyEntry].self, forKey: .importedEntries) ?? []
+        entries = decodedEntries.isEmpty ? legacyImportedEntries : decodedEntries
         lastImportedSource = try container.decodeIfPresent(String.self, forKey: .lastImportedSource)
         lastImportedAt = try container.decodeIfPresent(String.self, forKey: .lastImportedAt)
     }
 
-    var suggestions: [TerminologyEntry] {
-        entries.filter { $0.type == .suggestion }
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encode(entries, forKey: .entries)
+        try container.encodeIfPresent(lastImportedSource, forKey: .lastImportedSource)
+        try container.encodeIfPresent(lastImportedAt, forKey: .lastImportedAt)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled
+        case entries
+        case importedEntries
+        case lastImportedSource
+        case lastImportedAt
     }
 }
 
 enum TerminologyEntryType: String, Codable, Sendable, Equatable, CaseIterable {
     case term
     case correction
-    case suggestion
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        switch rawValue {
+        case Self.correction.rawValue:
+            self = .correction
+        case Self.term.rawValue, "suggestion":
+            self = .term
+        default:
+            self = .term
+        }
+    }
 }
 
 struct TerminologyEntry: Codable, Sendable, Equatable {
@@ -249,7 +272,7 @@ struct TerminologyEntry: Codable, Sendable, Equatable {
 
     var canonical: String {
         switch type {
-        case .term, .suggestion:
+        case .term:
             return original
         case .correction:
             return replacement?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
@@ -297,14 +320,16 @@ struct TerminologyEntry: Codable, Sendable, Equatable {
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        type = try container.decodeIfPresent(TerminologyEntryType.self, forKey: .type) ?? .term
+        let rawType = try container.decodeIfPresent(String.self, forKey: .type) ?? TerminologyEntryType.term.rawValue
+        type = rawType == TerminologyEntryType.correction.rawValue ? .correction : .term
         original = try container.decodeIfPresent(String.self, forKey: .original)
             ?? container.decodeIfPresent(String.self, forKey: .canonical)
             ?? ""
         replacement = try container.decodeIfPresent(String.self, forKey: .replacement)
         aliases = try container.decodeIfPresent([String].self, forKey: .aliases) ?? []
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
-        source = try container.decodeIfPresent(String.self, forKey: .source) ?? "typewhisper-import"
+        let decodedSource = try container.decodeIfPresent(String.self, forKey: .source) ?? "typewhisper-import"
+        source = rawType == "suggestion" && decodedSource == "auto-suggestion" ? "legacy-import" : decodedSource
         usageCount = try container.decodeIfPresent(Int.self, forKey: .usageCount) ?? 0
         createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
             ?? ISO8601DateFormatter().string(from: Date())

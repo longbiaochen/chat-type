@@ -9,13 +9,13 @@ Usage:
   echo "post text" | scripts/post_x.sh [--print]
 
 Options:
-  --print         Print the resolved chrome-use workflow without sending the post.
+  --print         Print the official Chrome plugin workflow without sending the post.
   -h, --help      Show this help message.
 
 Notes:
-  - Uses chrome-use + Chrome for Testing, not xurl.
   - Reads post text from the first positional argument or stdin.
-  - Uses the same managed browser session for publish and verification.
+  - Live posting must be done through the official Chrome plugin in the signed-in browser.
+  - This CLI only prints the required manual/plugin workflow and refuses legacy automation.
 EOF
 }
 
@@ -69,9 +69,20 @@ if [[ -z "$text" ]]; then
   exit 1
 fi
 
-cmd=(node "$SCRIPT_DIR/post_x_via_chrome_use.mjs" --text "$text")
 if [[ "$print_only" -eq 1 ]]; then
-  cmd+=(--print)
+  cat <<EOF
+Resolved workflow:
+  transport: official Chrome plugin
+  browser: signed-in Chrome/default profile
+  compose_url: https://x.com/compose/post
+  post_text: $text
+  verification: open the profile and confirm a fresh /status/ URL containing the post text
+EOF
+  exit 0
 fi
 
-"${cmd[@]}"
+cat >&2 <<'EOF'
+Live X posting from scripts/post_x.sh is disabled.
+Use the official Chrome plugin with the signed-in browser, then verify the new post on the profile page.
+EOF
+exit 2

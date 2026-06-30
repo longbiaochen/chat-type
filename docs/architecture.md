@@ -35,12 +35,11 @@ The V1 architecture deliberately optimizes for a single-app workflow where ChatT
   - builds the fixed “directly usable text” prompt and optional hidden hint terms
 - `TerminologyNormalizer`
   - applies deterministic terminology alignment before and after optional text polish
+- `TerminologyTextImporter`
+  - imports plain text or CSV terminology dictionaries into ChatType-owned entries
 - `OpenAICompatibleTextPolisher`
   - runs the optional post-ASR rewrite pass through ChatType-managed ChatGPT Auth
   - calls the configured ChatGPT backend Responses endpoint with a ChatGPT access token
-- `TypeWhisperTerminologyImporter`
-  - reads a manual snapshot from `~/Library/Application Support/TypeWhisper/dictionary.store`
-  - converts enabled TypeWhisper term rows into ChatType-owned canonical terminology entries
 - `LatencyRecorder`
   - appends per-dictation JSONL metrics under `~/Library/Application Support/ChatType/latency.jsonl`
 - `TextInjector`
@@ -81,7 +80,7 @@ Behavior:
 
 - OpenAI-compatible recovery sends a fixed prompt through the official transcriptions API
 - the ChatGPT account route tries the same prompt and retries without it if the private route rejects the field
-- optional manual imports from TypeWhisper become ChatType-owned canonical terminology entries
+- optional manual text or CSV imports become ChatType-owned canonical terminology entries
 - imported terminology is aligned by a deterministic local normalizer before and after optional text polish
 - optional text polish removes filler words, prefers later corrections, and uses plan-like structure for long agent-facing dictation
 - hidden `transcription.hintTerms` remain exact-only preservation hints

@@ -285,6 +285,52 @@ func terminologyNormalizerDoesNotDowncaseCorrectionReplacementWithLowercaseTerm(
 }
 
 @Test
+func terminologyNormalizerAppliesUserLowercaseTermCasingForShadowd() {
+    let result = TerminologyNormalizer().normalize(
+        text: "ShadowD 和 SHADOWD 都应该按词库输出。",
+        importedEntries: [
+            TerminologyEntry(
+                type: .term,
+                original: "shadowd",
+                replacement: nil,
+                aliases: [],
+                isEnabled: true,
+                source: "user",
+                usageCount: 0,
+                createdAt: "2026-06-15T06:43:11Z"
+            ),
+        ],
+        hintTerms: []
+    )
+
+    #expect(result.text == "shadowd 和 shadowd 都应该按词库输出。")
+    #expect(result.exactReplacementCount == 2)
+}
+
+@Test
+func terminologyNormalizerAppliesExplicitLowercaseCorrectionForShadowd() {
+    let result = TerminologyNormalizer().normalize(
+        text: "ShadowD 应该用小写。",
+        importedEntries: [
+            TerminologyEntry(
+                type: .correction,
+                original: "ShadowD",
+                replacement: "shadowd",
+                aliases: [],
+                isEnabled: true,
+                source: "user",
+                usageCount: 0,
+                createdAt: "2026-06-15T06:43:11Z"
+            ),
+        ],
+        hintTerms: []
+    )
+
+    #expect(result.text == "shadowd 应该用小写。")
+    #expect(result.exactReplacementCount == 1)
+}
+
+@Test
 func terminologyNormalizerAvoidsFuzzyRewritesInsideProtectedLiterals() {
     let result = TerminologyNormalizer().normalize(
         text: "保留 https://example.com/Takwiisper 和 --takwiisper 以及 /tmp/Takwiisper，不要乱改。",
