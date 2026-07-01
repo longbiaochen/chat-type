@@ -3,208 +3,872 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ChatType</title>
-  <meta name="description" content="按住 F5 说话，松开就把中文直接回填到当前输入框。ChatType 是面向已登录 ChatGPT Desktop 用户的原生 macOS 听写工具。">
+  <title>ChatType - F5 语音输入到当前光标</title>
+  <meta name="description" content="ChatType 是原生 macOS 语音输入工具。连接本机 ChatGPT 登录态，按 F5 录音，再按 F5 停止，把转写结果回填到当前光标，无法安全粘贴时保留到剪贴板。">
+  <meta property="og:title" content="ChatType - F5 语音输入到当前光标">
+  <meta property="og:description" content="原生 macOS 语音输入工具。F5 开始，F5 停止，结果直达输入层。">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23241f19'/%3E%3Ctext x='32' y='41' text-anchor='middle' font-family='Georgia,serif' font-size='32' font-weight='700' fill='%23fff8eb'%3EC%3C/text%3E%3C/svg%3E">
   <style>
     :root {
-      --bg: #0f1722;
-      --bg-soft: #171f2d;
-      --card: rgba(255, 255, 255, 0.05);
-      --text: #eef4fb;
-      --muted: #bfc9d8;
-      --line: rgba(255, 255, 255, 0.12);
-      --accent: #7ac7ff;
-      --accent-2: #59d69e;
-      --warning: #ffbf52;
+      color-scheme: light;
+      --paper: #f7f3e8;
+      --surface: #fffdf7;
+      --surface-strong: #ffffff;
+      --ink: #241f19;
+      --body: #625a4d;
+      --muted: #8d8374;
+      --line: rgba(36, 31, 25, 0.13);
+      --line-strong: rgba(36, 31, 25, 0.22);
+      --rose: #af2b5b;
+      --rose-soft: #f3d9e3;
+      --teal: #277f73;
+      --teal-soft: #dcece6;
+      --gold: #a56b18;
+      --charcoal: #1f1a15;
+      --shadow: 0 18px 42px rgba(36, 31, 25, 0.12);
     }
-    * { box-sizing: border-box; }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
     body {
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif;
-      color: var(--text);
-      background:
-        radial-gradient(circle at top left, rgba(122, 199, 255, 0.18), transparent 28%),
-        radial-gradient(circle at top right, rgba(89, 214, 158, 0.12), transparent 24%),
-        linear-gradient(180deg, #0d141d 0%, var(--bg) 50%, #0b1118 100%);
-      min-height: 100vh;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: Charter, Georgia, "Times New Roman", "Songti SC", STSong, "Noto Serif SC", SimSun, serif;
+      font-size: 17px;
+      line-height: 1.65;
     }
-    main {
-      max-width: 980px;
+
+    a {
+      color: inherit;
+    }
+
+    img {
+      display: block;
+      max-width: 100%;
+    }
+
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid var(--line);
+      background: rgba(247, 243, 232, 0.94);
+      backdrop-filter: blur(14px);
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      width: min(1120px, calc(100% - 32px));
+      min-height: 72px;
       margin: 0 auto;
-      padding: 56px 24px 72px;
     }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 26px;
+      height: 26px;
+      place-items: center;
+      border-radius: 7px;
+      color: var(--surface);
+      background: var(--charcoal);
+      font-size: 14px;
+      line-height: 1;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--body);
+    }
+
+    .nav-links a {
+      padding: 8px 10px;
+      border-radius: 8px;
+      text-decoration: none;
+    }
+
+    .nav-links a:hover,
+    .nav-links a:focus-visible {
+      background: rgba(36, 31, 25, 0.07);
+      outline: none;
+    }
+
+    .nav-cta {
+      border: 1px solid var(--rose);
+      color: var(--rose);
+    }
+
     .hero {
-      padding: 28px;
-      border: 1px solid var(--line);
-      border-radius: 28px;
-      background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
-      box-shadow: 0 18px 60px rgba(0,0,0,0.22);
+      padding: 76px 0 58px;
+      border-bottom: 1px solid var(--line);
     }
+
+    .wrap {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 0.92fr) minmax(420px, 1.08fr);
+      align-items: center;
+      gap: 48px;
+    }
+
     .eyebrow {
-      display: inline-block;
-      padding: 8px 12px;
-      border-radius: 999px;
-      background: rgba(122, 199, 255, 0.12);
-      color: var(--accent);
-      font-size: 13px;
-      letter-spacing: 0.02em;
+      margin: 0 0 14px;
+      color: var(--rose);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0;
+      text-transform: uppercase;
     }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
     h1 {
-      margin: 18px 0 14px;
-      font-size: clamp(36px, 8vw, 64px);
-      line-height: 0.95;
-      letter-spacing: -0.04em;
+      max-width: 780px;
+      margin-bottom: 18px;
+      color: var(--ink);
+      font-size: 58px;
+      line-height: 1.08;
+      letter-spacing: 0;
     }
+
+    .hero-word {
+      color: var(--rose);
+    }
+
+    .hero-word.alt {
+      color: var(--teal);
+    }
+
     .lead {
-      max-width: 720px;
-      margin: 0 0 24px;
-      color: var(--muted);
-      font-size: 18px;
-      line-height: 1.6;
+      max-width: 650px;
+      margin-bottom: 28px;
+      color: var(--body);
+      font-size: 19px;
+      line-height: 1.75;
     }
+
     .actions {
       display: flex;
       flex-wrap: wrap;
       gap: 12px;
-      margin-bottom: 26px;
+      margin-bottom: 22px;
     }
-    .actions a {
+
+    .button {
       display: inline-flex;
+      min-height: 48px;
       align-items: center;
       justify-content: center;
-      min-height: 46px;
       padding: 0 18px;
-      border-radius: 999px;
-      text-decoration: none;
-      font-weight: 600;
-    }
-    .primary {
-      background: var(--text);
-      color: #0c1219;
-    }
-    .secondary {
-      border: 1px solid var(--line);
-      color: var(--text);
-      background: rgba(255,255,255,0.04);
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 14px;
-      margin-top: 18px;
-    }
-    .card {
-      padding: 18px;
-      border-radius: 20px;
-      border: 1px solid var(--line);
-      background: var(--card);
-    }
-    .card h2, .section h2 {
-      margin: 0 0 12px;
-      font-size: 18px;
-    }
-    .card p, .section p, .section li {
-      color: var(--muted);
-      line-height: 1.65;
-    }
-    .section {
-      margin-top: 20px;
-      padding: 24px;
-      border-radius: 24px;
-      border: 1px solid var(--line);
-      background: rgba(255,255,255,0.03);
-    }
-    ol, ul {
-      margin: 0;
-      padding-left: 20px;
-    }
-    .note {
-      color: var(--warning);
-    }
-    footer {
-      margin-top: 18px;
-      color: var(--muted);
-      font-size: 14px;
-    }
-    code {
-      padding: 2px 6px;
       border-radius: 8px;
-      background: rgba(255,255,255,0.06);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 0.95em;
+      border: 1px solid var(--line-strong);
+      text-decoration: none;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      font-size: 14px;
+      font-weight: 750;
+    }
+
+    .button.primary {
+      border-color: var(--rose);
+      color: var(--surface);
+      background: var(--rose);
+    }
+
+    .button.secondary {
+      color: var(--rose);
+      background: rgba(255, 255, 255, 0.45);
+    }
+
+    .button:hover,
+    .button:focus-visible {
+      transform: translateY(-1px);
+      box-shadow: 0 12px 28px rgba(36, 31, 25, 0.12);
+      outline: none;
+    }
+
+    .hero-notes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      color: var(--muted);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      font-size: 13px;
+      list-style: none;
+    }
+
+    .hero-notes li {
+      padding: 6px 9px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 253, 247, 0.55);
+    }
+
+    .visual-stage {
+      display: grid;
+      gap: 14px;
+    }
+
+    .product-shot {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-strong);
+      box-shadow: var(--shadow);
+    }
+
+    .product-shot img {
+      width: 100%;
+      aspect-ratio: 16 / 10;
+      object-fit: cover;
+      object-position: center;
+    }
+
+    .demo-toggle {
+      display: inline-flex;
+      gap: 6px;
+      width: max-content;
+      padding: 5px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 253, 247, 0.74);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      font-size: 13px;
+    }
+
+    .demo-toggle button {
+      min-height: 32px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 7px;
+      color: var(--body);
+      background: transparent;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .demo-toggle button[aria-pressed="true"] {
+      color: var(--surface);
+      background: var(--charcoal);
+    }
+
+    .section {
+      padding: 88px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section.alt {
+      background: #fbfaf5;
+    }
+
+    .section.dark {
+      color: #fff8eb;
+      background: var(--charcoal);
+    }
+
+    .section.dark .eyebrow,
+    .section.dark h2,
+    .section.dark h3 {
+      color: #fff8eb;
+    }
+
+    .section.dark p,
+    .section.dark li {
+      color: rgba(255, 248, 235, 0.76);
+    }
+
+    .section-head {
+      max-width: 760px;
+      margin-bottom: 34px;
+    }
+
+    h2 {
+      margin-bottom: 16px;
+      font-size: 38px;
+      line-height: 1.18;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin-bottom: 8px;
+      font-size: 20px;
+      line-height: 1.3;
+      letter-spacing: 0;
+    }
+
+    .section-head p,
+    .large-copy {
+      color: var(--body);
+      font-size: 19px;
+      line-height: 1.8;
+    }
+
+    .steps,
+    .feature-grid,
+    .trust-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .card {
+      min-height: 100%;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 253, 247, 0.72);
+    }
+
+    .card p,
+    .card li {
+      margin-bottom: 0;
+      color: var(--body);
+    }
+
+    .number {
+      display: grid;
+      width: 32px;
+      height: 32px;
+      margin-bottom: 22px;
+      place-items: center;
+      border-radius: 8px;
+      color: var(--rose);
+      background: var(--rose-soft);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .feature-grid .card:nth-child(2n) .number,
+    .trust-grid .card:nth-child(2n) .number {
+      color: var(--teal);
+      background: var(--teal-soft);
+    }
+
+    .comparison {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .compare-card {
+      padding: 26px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 253, 247, 0.72);
+    }
+
+    .compare-card.strong {
+      border-color: rgba(175, 43, 91, 0.36);
+      background: #fffaf4;
+      box-shadow: var(--shadow);
+    }
+
+    .compare-card ul {
+      display: grid;
+      gap: 14px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .compare-card li {
+      padding-left: 22px;
+      color: var(--body);
+      position: relative;
+    }
+
+    .compare-card li::before {
+      content: "";
+      position: absolute;
+      top: 12px;
+      left: 0;
+      width: 8px;
+      height: 8px;
+      border-radius: 8px;
+      background: var(--muted);
+    }
+
+    .compare-card.strong li::before {
+      background: var(--rose);
+    }
+
+    .model {
+      display: grid;
+      grid-template-columns: minmax(0, 0.92fr) minmax(320px, 1.08fr);
+      gap: 34px;
+      align-items: start;
+    }
+
+    .model-panel {
+      display: grid;
+      gap: 14px;
+    }
+
+    .route {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 253, 247, 0.72);
+    }
+
+    .route strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--ink);
+    }
+
+    .quote {
+      max-width: 760px;
+      margin: 0;
+      font-size: 32px;
+      line-height: 1.35;
+      font-weight: 700;
+    }
+
+    .trust-grid .card {
+      background: rgba(255, 248, 235, 0.07);
+      border-color: rgba(255, 248, 235, 0.18);
+    }
+
+    .download {
+      padding: 78px 0;
+      color: #fff8eb;
+      background: var(--rose);
+      text-align: center;
+    }
+
+    .download h2 {
+      margin-bottom: 8px;
+      color: #fff8eb;
+    }
+
+    .download p {
+      max-width: 720px;
+      margin: 0 auto 24px;
+      color: rgba(255, 248, 235, 0.82);
+    }
+
+    .download .actions {
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+
+    .download .button.primary {
+      border-color: #fff8eb;
+      color: var(--rose);
+      background: #fff8eb;
+    }
+
+    .download .button.secondary {
+      border-color: rgba(255, 248, 235, 0.5);
+      color: #fff8eb;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .fine-print {
+      color: rgba(255, 248, 235, 0.68);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      font-size: 13px;
+    }
+
+    .footer {
+      padding: 28px 0;
+      color: var(--muted);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      font-size: 13px;
+    }
+
+    .footer .wrap {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 6px;
+      background: rgba(36, 31, 25, 0.08);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    @media (max-width: 900px) {
+      .nav {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 14px 0;
+      }
+
+      .nav-links {
+        width: 100%;
+        overflow-x: auto;
+        padding-bottom: 2px;
+      }
+
+      .hero {
+        padding-top: 52px;
+      }
+
+      .hero-grid,
+      .model,
+      .comparison {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        font-size: 42px;
+      }
+
+      h2 {
+        font-size: 31px;
+      }
+
+      .steps,
+      .feature-grid,
+      .trust-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .quote {
+        font-size: 27px;
+      }
+    }
+
+    @media (max-width: 560px) {
+      body {
+        font-size: 16px;
+      }
+
+      .wrap,
+      .nav {
+        width: min(100% - 24px, 1120px);
+      }
+
+      .nav-links a {
+        white-space: nowrap;
+      }
+
+      h1 {
+        font-size: 35px;
+      }
+
+      h2 {
+        font-size: 27px;
+      }
+
+      .hero,
+      .section,
+      .download {
+        padding-top: 52px;
+        padding-bottom: 52px;
+      }
+
+      .button {
+        width: 100%;
+      }
+
+      .demo-toggle {
+        width: 100%;
+      }
+
+      .demo-toggle button {
+        flex: 1;
+      }
     }
   </style>
 </head>
 <body>
+  <header class="site-header">
+    <nav class="nav" aria-label="主导航">
+      <a class="brand" href="#hero" aria-label="ChatType 首页">
+        <span class="brand-mark">C</span>
+        <span>ChatType</span>
+      </a>
+      <div class="nav-links">
+        <a href="#demo">流程</a>
+        <a href="#why">能力</a>
+        <a href="#privacy">隐私</a>
+        <a href="#trust">边界</a>
+        <a class="nav-cta" href="#download">下载</a>
+      </div>
+    </nav>
+  </header>
+
   <main>
-    <section class="hero">
-      <div class="eyebrow">ChatType v0.5.1</div>
-      <h1>按住 F5 说话，松开就把中文直接回填到当前输入框。</h1>
-      <p class="lead">
-        ChatType 是一个原生 macOS 听写工具，面向已经在这台 Mac 上登录 ChatGPT Desktop 的用户。
-        它走本地桌面登录态，不要求额外 API key，不要求本地模型下载，核心目标就是把
-        <code>F5 -&gt; speak -&gt; paste</code> 这条链路做到足够快、足够稳。
-      </p>
-      <div class="actions">
-        <a class="primary" href="https://github.com/longbiaochen/chat-type/releases/tag/v0.5.1">下载 v0.5.1</a>
-        <a class="secondary" href="https://github.com/longbiaochen/chat-type">查看 GitHub 仓库</a>
+    <section class="hero" id="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <p class="eyebrow">local-first macOS input layer</p>
+          <h1>按下 <span class="hero-word">F5</span> 说话，文字回到<span class="hero-word alt">当前光标</span>。</h1>
+          <p class="lead">
+            ChatType 是原生 macOS 语音输入工具。它连接这台 Mac 上的 ChatGPT 登录态，录音结束后转写、术语修正、可选润色，再把结果送回你正在输入的地方。不能安全粘贴时，结果保留在剪贴板。
+          </p>
+          <div class="actions">
+            <a class="button primary" href="https://github.com/longbiaochen/chat-type/releases/tag/v0.5.1">下载 v0.5.1</a>
+            <a class="button secondary" href="#demo">看 F5 流程</a>
+          </div>
+          <ul class="hero-notes" aria-label="产品要点">
+            <li>原生菜单栏 app</li>
+            <li>ChatGPT Desktop 登录路径</li>
+            <li>剪贴板安全回退</li>
+            <li>MIT 开源</li>
+          </ul>
+        </div>
+        <div class="visual-stage" aria-label="ChatType 实际界面截图">
+          <div class="product-shot">
+            <img id="product-shot" src="assets/chattype-recording.png" alt="ChatType 录音状态 HUD 截图">
+          </div>
+          <div class="demo-toggle" aria-label="切换产品截图">
+            <button type="button" data-shot="recording" aria-pressed="true">录音中</button>
+            <button type="button" data-shot="result" aria-pressed="false">结果回填</button>
+          </div>
+        </div>
       </div>
-      <div class="grid">
-        <div class="card">
-          <h2>产品承诺</h2>
-          <p>默认 ASR 不要求 API key；长句润色也走 ChatGPT 登录态，不单独配置文本模型 key。</p>
+    </section>
+
+    <section class="section alt" id="demo">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="eyebrow">demo</p>
+          <h2>三步完成一段可用输入。</h2>
+          <p>它不是聊天窗口，也不是另一个待切换的编辑器。ChatType 把语音转写放回输入层，让你在 Notes、Mail、Slack、Codex 或浏览器表单里继续写。</p>
         </div>
-        <div class="card">
-          <h2>这次更新</h2>
-          <p>v0.5.1 修复 AI Polish 后端请求格式，并让设置页显示润色尝试、成功和失败统计。</p>
-        </div>
-        <div class="card">
-          <h2>安装要求</h2>
-          <p>必须把打包后的 <code>ChatType.app</code> 安装到 <code>/Applications</code>，不要直接从 <code>dist</code> 运行。</p>
+        <div class="steps">
+          <article class="card">
+            <span class="number">1</span>
+            <h3>把光标放好</h3>
+            <p>选择任何可编辑位置。ChatType 会先检查目标是否适合自动粘贴。</p>
+          </article>
+          <article class="card">
+            <span class="number">2</span>
+            <h3>F5 开始，再按 F5 停止</h3>
+            <p>单一触发键保持稳定：不用记复杂快捷键，也不用切到录音窗口。</p>
+          </article>
+          <article class="card">
+            <span class="number">3</span>
+            <h3>结果落回输入处</h3>
+            <p>可粘贴时自动回填；目标不安全时保留到剪贴板，手动 <code>Cmd+V</code> 即可。</p>
+          </article>
         </div>
       </div>
     </section>
-    <section class="section">
-      <h2>使用流程</h2>
-      <ol>
-        <li>下载并安装 <code>ChatType.app</code> 到 <code>/Applications/ChatType.app</code>。</li>
-        <li>在 ChatType 设置里完成 ChatGPT 登录。</li>
-        <li>首次运行时授予麦克风权限。</li>
-        <li>如果你要自动回填到当前输入框，授予 Accessibility 权限。</li>
-        <li>把光标放到 Notes、Mail、Slack、Codex 等可输入位置。</li>
-        <li>按一次 <code>F5</code> 开始录音，再按一次 <code>F5</code> 结束录音并回填。</li>
-      </ol>
+
+    <section class="section" id="why">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="eyebrow">why it feels different</p>
+          <h2>它理解你是在写东西，而不是只生成一段录音文字。</h2>
+        </div>
+        <div class="feature-grid">
+          <article class="card">
+            <span class="number">A</span>
+            <h3>术语先对齐</h3>
+            <p>导入词表后，产品名、文件名、英文大小写和常用纠错会在润色前后各跑一次。</p>
+          </article>
+          <article class="card">
+            <span class="number">B</span>
+            <h3>长句可选 AI Polish</h3>
+            <p>长段口述可以被整理成更像可执行 prompt 的结构；短句保持快速，不强行润色。</p>
+          </article>
+          <article class="card">
+            <span class="number">C</span>
+            <h3>粘贴保守</h3>
+            <p>只有检测到可编辑目标才声明成功，避免把文本送到错误窗口。</p>
+          </article>
+        </div>
+      </div>
     </section>
-    <section class="section">
-      <h2>权限说明</h2>
-      <ul>
-        <li>麦克风：用于录音；首用时会触发系统权限提示。</li>
-        <li>Accessibility：用于把结果回填到当前输入光标；只有检测到可编辑目标时才会报告粘贴成功，否则保留在剪贴板供手动粘贴。</li>
-        <li class="note">重要：权限修复和验证都必须基于 <code>/Applications/ChatType.app</code>，不要基于 <code>dist/ChatType.app</code>。</li>
-      </ul>
+
+    <section class="section alt" id="comparison">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="eyebrow">versus ordinary dictation</p>
+          <h2>普通听写停在转写。ChatType 关心转写之后能不能直接用。</h2>
+        </div>
+        <div class="comparison">
+          <article class="compare-card">
+            <h3>普通听写</h3>
+            <ul>
+              <li>结果常常需要复制到另一个工具里二次整理。</li>
+              <li>专有名词和中英混输容易漂移，需要反复手改。</li>
+              <li>无法确认当前输入目标是否安全，只能假设粘贴成功。</li>
+              <li>长段口述里的修正语和重复语会原样留下。</li>
+            </ul>
+          </article>
+          <article class="compare-card strong">
+            <h3>ChatType</h3>
+            <ul>
+              <li>F5 输入链路就在当前 app，减少切换和复制。</li>
+              <li>术语词表和确定性修正保护关键字。</li>
+              <li>检测可编辑目标，失败时改用剪贴板回退。</li>
+              <li>可选 ChatGPT Auth AI Polish，把长段整理成可执行文本。</li>
+            </ul>
+          </article>
+        </div>
+      </div>
     </section>
-    <section class="section">
-      <h2>v0.5.1 Highlights</h2>
-      <ul>
-        <li>修复 AI Polish 请求格式与 ChatGPT/Codex 私有 Responses 入口不匹配的问题。</li>
-        <li>AI Polish 统计现在显示尝试、成功和失败次数，后端失败不会再被隐藏成普通 ASR。</li>
-        <li>设置页重构为工作流侧栏，覆盖 Account、Dictation、AI Polish、Terminology、Paste 和 Advanced。</li>
-        <li>AI Polish 与 ASR 分开配置，但只使用 ChatType 保存的 ChatGPT 登录态，不再要求文本润色 provider key。</li>
-        <li>术语对齐在 AI 润色前后各跑一次，提高口音和大小写漂移下的召回。</li>
-        <li>默认 public path 改为 ChatType 自己登录 ChatGPT + <code>F5 -&gt; speak -&gt; paste</code>。</li>
-        <li>剪贴板默认保留最后一次转写结果，光标丢失时可以直接手动粘贴；安装路径仍然必须是 <code>/Applications/ChatType.app</code>。</li>
-      </ul>
+
+    <section class="section" id="model">
+      <div class="wrap model">
+        <div>
+          <p class="eyebrow">model and account path</p>
+          <h2>默认走本机 ChatGPT 登录态，不要求额外 API key。</h2>
+          <p class="large-copy">
+            ChatType 的公开路径是给已经使用 ChatGPT Desktop 的个人用户准备的：通过默认浏览器完成 OAuth，保存 app 自己的本地会话，再调用转写路径。高级 OpenAI-Compatible 路线只作为恢复和自定义场景。
+          </p>
+        </div>
+        <div class="model-panel">
+          <article class="route">
+            <strong>默认</strong>
+            <p>ChatGPT 登录态 + ChatType 本地会话。安装后连接账号，之后用 <code>F5</code> 录音。</p>
+          </article>
+          <article class="route">
+            <strong>可选</strong>
+            <p>AI Polish 只处理适合整理的长段文本，失败不会吞掉原始转写。</p>
+          </article>
+          <article class="route">
+            <strong>高级恢复</strong>
+            <p>OpenAI-Compatible 端点适合自带 key 的用户，不是默认 onboarding。</p>
+          </article>
+        </div>
+      </div>
     </section>
-    <section class="section">
-      <h2>开源与支持</h2>
-      <p>
-        ChatType 是 MIT 许可的开源项目。赞助入口只用于支持后续维护，不改变免费使用路径；
-        如果你只是想试用或反馈问题，直接从 GitHub Release 下载 v0.5.1 即可。
-      </p>
+
+    <section class="section alt" id="privacy">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="eyebrow">privacy</p>
+          <h2>权限和数据边界写清楚。</h2>
+          <p>ChatType 是 local-first 桌面工具，但它不是离线模型。录音会通过你连接的 ChatGPT 路径完成转写；本地负责录音、会话、术语、权限检查、粘贴判断和剪贴板回退。</p>
+        </div>
+        <div class="feature-grid">
+          <article class="card">
+            <span class="number">1</span>
+            <h3>麦克风</h3>
+            <p>首次录音时触发系统权限提示。权限修复以 <code>/Applications/ChatType.app</code> 为准。</p>
+          </article>
+          <article class="card">
+            <span class="number">2</span>
+            <h3>Accessibility</h3>
+            <p>只用于把结果送回当前可编辑目标。没有安全目标时保留到剪贴板。</p>
+          </article>
+          <article class="card">
+            <span class="number">3</span>
+            <h3>本地配置</h3>
+            <p>术语词表、会话和偏好保存在这台 Mac 的 ChatType 配置目录里。</p>
+          </article>
+        </div>
+      </div>
     </section>
-    <footer>
-      ChatType 依赖自己保存的本地 ChatGPT 会话和上游私有转写链路；它是面向个人使用效率的工具，不把这条集成表述成稳定公开 API。
-    </footer>
+
+    <section class="section dark" id="trust">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="eyebrow">built to trust</p>
+          <h2>强在效率，也明确说出限制。</h2>
+        </div>
+        <p class="quote">ChatType 不是稳定公开 API 的企业级承诺。它是给个人高频输入做的原生工具，依赖本机 ChatGPT 登录态和上游私有转写链路。</p>
+        <div class="trust-grid" style="margin-top: 32px;">
+          <article class="card">
+            <span class="number">A</span>
+            <h3>不要从 dist 运行</h3>
+            <p>真实权限、LaunchServices 和验证路径都绑定安装后的 <code>/Applications/ChatType.app</code>。</p>
+          </article>
+          <article class="card">
+            <span class="number">B</span>
+            <h3>上游可能变化</h3>
+            <p>如果 ChatGPT Web 会话或私有端点变化，ChatType 会把失败暴露出来，而不是伪装成功。</p>
+          </article>
+          <article class="card">
+            <span class="number">C</span>
+            <h3>开源可检查</h3>
+            <p>仓库包含源码、测试、打包脚本和发布说明。默认故事保持窄而诚实。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="download" id="download">
+      <div class="wrap">
+        <h2>下载 ChatType，开始用 F5 输入。</h2>
+        <p>macOS 原生菜单栏 app。连接 ChatGPT，授予麦克风和可选 Accessibility 权限，然后把语音输入放回你的日常写作位置。</p>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/longbiaochen/chat-type/releases/tag/v0.5.1">下载 v0.5.1</a>
+          <a class="button secondary" href="https://github.com/longbiaochen/chat-type">查看 GitHub 仓库</a>
+        </div>
+        <div class="fine-print">MIT 开源 · macOS · ChatGPT Desktop 登录路径 · local-first input layer</div>
+      </div>
+    </section>
   </main>
+
+  <footer class="footer">
+    <div class="wrap">
+      <span>ChatType</span>
+      <span id="year">2026</span>
+    </div>
+  </footer>
+
+  <script>
+    const shots = {
+      recording: {
+        src: "assets/chattype-recording.png",
+        alt: "ChatType 录音状态 HUD 截图"
+      },
+      result: {
+        src: "assets/chattype-result.png",
+        alt: "ChatType 结果状态 HUD 截图"
+      }
+    };
+
+    const image = document.querySelector("#product-shot");
+    const buttons = document.querySelectorAll("[data-shot]");
+
+    buttons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const shot = shots[button.dataset.shot];
+        if (!shot) return;
+        image.src = shot.src;
+        image.alt = shot.alt;
+        buttons.forEach((item) => {
+          item.setAttribute("aria-pressed", String(item === button));
+        });
+      });
+    });
+
+    document.querySelector("#year").textContent = new Date().getFullYear();
+  </script>
 </body>
 </html>
