@@ -221,8 +221,22 @@ struct TerminologyConfig: Codable, Sendable, Equatable {
         let decodedEntries = try container.decodeIfPresent([TerminologyEntry].self, forKey: .entries) ?? []
         let legacyImportedEntries = try container.decodeIfPresent([TerminologyEntry].self, forKey: .importedEntries) ?? []
         entries = decodedEntries.isEmpty ? legacyImportedEntries : decodedEntries
-        lastImportedSource = try container.decodeIfPresent(String.self, forKey: .lastImportedSource)
+        lastImportedSource = Self.normalizedImportedSource(
+            try container.decodeIfPresent(String.self, forKey: .lastImportedSource)
+        )
         lastImportedAt = try container.decodeIfPresent(String.self, forKey: .lastImportedAt)
+    }
+
+    private static func normalizedImportedSource(_ source: String?) -> String? {
+        guard let source, !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        if source.localizedCaseInsensitiveContains("TypeWhisper") {
+            return nil
+        }
+
+        return source
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -304,7 +318,7 @@ struct TerminologyEntry: Codable, Sendable, Equatable {
     init(
         canonical: String,
         aliases: [String],
-        source: String = "typewhisper-import"
+        source: String = "dictionary-import"
     ) {
         self.init(
             type: .term,
@@ -328,11 +342,23 @@ struct TerminologyEntry: Codable, Sendable, Equatable {
         replacement = try container.decodeIfPresent(String.self, forKey: .replacement)
         aliases = try container.decodeIfPresent([String].self, forKey: .aliases) ?? []
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
-        let decodedSource = try container.decodeIfPresent(String.self, forKey: .source) ?? "typewhisper-import"
-        source = rawType == "suggestion" && decodedSource == "auto-suggestion" ? "legacy-import" : decodedSource
+        let decodedSource = try container.decodeIfPresent(String.self, forKey: .source) ?? "dictionary-import"
+        source = Self.normalizedSource(rawType: rawType, source: decodedSource)
         usageCount = try container.decodeIfPresent(Int.self, forKey: .usageCount) ?? 0
         createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
             ?? ISO8601DateFormatter().string(from: Date())
+    }
+
+    private static func normalizedSource(rawType: String, source: String) -> String {
+        if rawType == "suggestion", source == "auto-suggestion" {
+            return "legacy-import"
+        }
+
+        if source == "typewhisper-import" || source.localizedCaseInsensitiveContains("TypeWhisper") {
+            return "dictionary-import"
+        }
+
+        return source
     }
 
     func encode(to encoder: any Encoder) throws {

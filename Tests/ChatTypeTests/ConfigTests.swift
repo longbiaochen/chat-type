@@ -182,15 +182,15 @@ func configRoundTripPreservesTerminologyEntries() throws {
     var config = AppConfig()
     config.transcription.terminology.entries = [
         TerminologyEntry(
-            canonical: "TypeWhisper",
-            aliases: ["Type Whisper", "Takwiisper"]
+            canonical: "ChatType",
+            aliases: ["Chat Type"]
         ),
         TerminologyEntry(
             canonical: "OpenAI Compatible",
             aliases: ["Open AI Compatible"]
         ),
     ]
-    config.transcription.terminology.lastImportedSource = "/Users/test/Library/Application Support/TypeWhisper/dictionary.store"
+    config.transcription.terminology.lastImportedSource = "/Users/test/terms.csv"
     config.transcription.terminology.lastImportedAt = "2026-04-19T10:00:00Z"
 
     let configURL = directory.appendingPathComponent("config.json")
@@ -201,9 +201,9 @@ func configRoundTripPreservesTerminologyEntries() throws {
     let decoded = try JSONDecoder().decode(AppConfig.self, from: Data(contentsOf: configURL))
     #expect(decoded.transcription.terminology.enabled == true)
     #expect(decoded.transcription.terminology.entries.count == 2)
-    #expect(decoded.transcription.terminology.entries[0].canonical == "TypeWhisper")
-    #expect(decoded.transcription.terminology.entries[0].aliases == ["Type Whisper", "Takwiisper"])
-    #expect(decoded.transcription.terminology.lastImportedSource == "/Users/test/Library/Application Support/TypeWhisper/dictionary.store")
+    #expect(decoded.transcription.terminology.entries[0].canonical == "ChatType")
+    #expect(decoded.transcription.terminology.entries[0].aliases == ["Chat Type"])
+    #expect(decoded.transcription.terminology.lastImportedSource == "/Users/test/terms.csv")
     #expect(decoded.transcription.terminology.lastImportedAt == "2026-04-19T10:00:00Z")
 }
 
@@ -234,7 +234,40 @@ func legacyImportedTerminologyEntriesMigrateIntoUserDictionaryEntries() throws {
     #expect(migrated.original == "TypeWhisper")
     #expect(migrated.aliases == ["Type Whisper", "Takwiisper"])
     #expect(migrated.isEnabled == true)
-    #expect(migrated.source == "typewhisper-import")
+    #expect(migrated.source == "dictionary-import")
+}
+
+@Test
+func legacyTypeWhisperTerminologyMetadataIsNormalized() throws {
+    let json = """
+    {
+      "transcription": {
+        "terminology": {
+          "enabled": true,
+          "lastImportedSource": "/Users/test/Library/Application Support/TypeWhisper/dictionary.store",
+          "lastImportedAt": "2026-04-19T10:00:00Z",
+          "entries": [
+            {
+              "type": "term",
+              "original": "ChatType",
+              "aliases": [],
+              "isEnabled": true,
+              "source": "typewhisper-import",
+              "usageCount": 0,
+              "createdAt": "2026-04-19T10:00:00Z"
+            }
+          ]
+        }
+      }
+    }
+    """.data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(AppConfig.self, from: json)
+    let migrated = try #require(decoded.transcription.terminology.entries.first)
+
+    #expect(decoded.transcription.terminology.lastImportedSource == nil)
+    #expect(decoded.transcription.terminology.lastImportedAt == "2026-04-19T10:00:00Z")
+    #expect(migrated.source == "dictionary-import")
 }
 
 @Test

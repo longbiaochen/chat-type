@@ -390,7 +390,7 @@ private struct PreferencesView: View {
         }
 
         if let timestamp = config.transcription.terminology.lastImportedAt {
-            return "Dictionary has \(entries.count) entries. Last TypeWhisper import: \(timestamp)."
+            return "Dictionary has \(entries.count) entries. Last dictionary import: \(timestamp)."
         }
 
         return "Dictionary has \(entries.count) entries."
@@ -945,7 +945,7 @@ private struct PreferencesView: View {
             terminologyCountBadge(title: "Terms", count: termCount, color: .accentColor)
             terminologyCountBadge(title: "Corrections", count: correctionCount, color: .orange)
             Spacer()
-            Text("Legacy `hintTerms` still works from config.json.")
+            Text("Import a text or CSV dictionary, then add custom terms or corrections here.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
         }
