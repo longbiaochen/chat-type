@@ -37,18 +37,20 @@
 - Verification ladder: unit tests, integration tests, then real installed-app user-flow testing. The first two are prechecks only.
 - For native GUI work, use official Computer Use whenever clicks, hotkeys, focus, timing, modal state, permissions, or multi-step interaction are touched.
 - ChatType Computer Use acceptance should cover: focus a real editable target, start with `F5`, stop with `F5`, cancel with `ESC`, cancel with inline close, retry after cancel/error, and observe paste-versus-clipboard result.
-- For closeouts, report the installed-app user flow exercised, the live verification path, and the exact outcome observed.
+- For closeouts, report the installed-app user flow exercised, the live verification path, the exact outcome observed, and the live ChatType state left for review.
+- After build, install, scripted visual acceptance, or interaction acceptance, relaunch `/Applications/ChatType.app` as the normal installed app and leave it running. General ship closeouts should leave the menu bar app running; Settings or Terminologies work should leave that window visible when practical.
 
 ## Release/Deploy
 
 - "Ship it" means run the canonical harness, build, install to `/Applications/ChatType.app`, validate installed behavior, and keep release-facing docs current.
-- After any fix reaches test/acceptance green, reinstall the freshly built app before reporting completion.
+- After any fix reaches test/acceptance green, reinstall the freshly built app, launch `/Applications/ChatType.app`, verify ChatType is still running, and leave it running before reporting completion.
 - Launch copy should describe the real public path: local Codex desktop login, `F5` to record, transcription, and paste-versus-clipboard fallback.
 
 ## Guardrails
 
 - Preserve the single-trigger workflow: `F5` starts recording and `F5` stops recording.
 - Do not run `ChatType.app` directly from `dist`.
+- Do not end a ChatType closeout with `pkill -x ChatType`, quit, or close. `scripts/install_app.sh` may stop the old app before replacing `/Applications/ChatType.app`, and visual demo scripts may stop transient overlay-demo processes, but final closeout must restore the normal installed runtime.
 - Keep `.notDetermined` permission paths as their own regression surface.
 - Keep the private ChatGPT backend dependency explicit in docs and UX; do not describe it as a stable public API.
 - Keep `OpenAI-Compatible` positioned as advanced recovery, not the default public story.

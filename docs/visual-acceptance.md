@@ -10,6 +10,8 @@ Use this chain for ChatType HUD or interaction-facing visual work after unit/int
 
 The command packages the current build, installs it to `/Applications/ChatType.app`, launches one installed-app demo process per HUD state through LaunchServices with `CHATTYPE_OVERLAY_DEMO=1` and `--overlay-demo-state`, discovers the ChatType HUD window with CoreGraphics, captures that window with `screencapture -l`, and runs the screenshot verifier.
 
+The script intentionally stops each transient overlay-demo process between HUD states. That cleanup is not the final user-review state. A successful run must relaunch the normal installed app from `/Applications/ChatType.app`, verify that ChatType is running, and leave it running.
+
 ## Evidence
 
 Each run writes a timestamped directory under:
@@ -36,5 +38,6 @@ For ChatType UI closeouts, report:
 - whether `verification.txt` passed
 - the installed-app live flow used for interaction acceptance
 - the observed paste-versus-clipboard result when transcription/injection behavior was touched
+- the normal installed ChatType runtime state left for user review
 
-The scripted visual run does not replace Computer Use interaction acceptance. It proves the installed build can render the expected HUD states and retry affordance without relying on full-screen screenshots, foreground browser state, or guessed screen bands.
+The scripted visual run does not replace Computer Use interaction acceptance. It proves the installed build can render the expected HUD states and retry affordance without relying on full-screen screenshots, foreground browser state, or guessed screen bands. Do not finish a ChatType GUI closeout by quitting or killing the app; if a script performs internal demo cleanup, relaunch `/Applications/ChatType.app` before reporting completion.

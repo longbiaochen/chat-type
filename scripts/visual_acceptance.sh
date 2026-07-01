@@ -43,6 +43,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
+wait_for_installed_app() {
+  local attempt
+  for attempt in {1..50}; do
+    if pgrep -x "$APP_NAME" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
 capture_state() {
   local state="$1"
   local output_file="$2"
@@ -79,6 +90,14 @@ swift "$ROOT/scripts/verify_visual_acceptance.swift" \
   "$OUT_DIR/04-error.png" \
   "$OUT_DIR/05-retryable-error.png" | tee "$OUT_DIR/verification.txt"
 
+/usr/bin/open "$APP_DIR"
+if ! wait_for_installed_app; then
+  echo "Installed app did not remain running after launch: $APP_DIR" >&2
+  exit 1
+fi
+
+RUNNING_PID="$(pgrep -x "$APP_NAME" | sed -n '1p')"
+
 cat >"$OUT_DIR/summary.md" <<SUMMARY
 # ChatType Visual Acceptance
 
@@ -86,6 +105,7 @@ cat >"$OUT_DIR/summary.md" <<SUMMARY
 - App: \`$APP_BINARY\`
 - Demo flag: \`CHATTYPE_OVERLAY_DEMO=1\`
 - Capture: CoreGraphics window discovery plus \`screencapture -l\`
+- Final live state: normal installed app relaunched and left running as PID \`$RUNNING_PID\`
 - Evidence:
   - \`01-recording.png\`
   - \`02-processing.png\`
@@ -98,3 +118,4 @@ cat >"$OUT_DIR/summary.md" <<SUMMARY
 SUMMARY
 
 echo "Visual acceptance artifacts: $OUT_DIR"
+echo "Installed app left running: $APP_DIR (PID $RUNNING_PID)"
