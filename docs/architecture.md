@@ -96,9 +96,8 @@ Behavior:
 
 - `scripts/visual_acceptance.sh --install` packages, installs, and launches `/Applications/ChatType.app` in overlay demo mode through LaunchServices
 - overlay demo mode is enabled with `CHATTYPE_OVERLAY_DEMO=1` or the `--overlay-demo` launch argument
-- before capture, the script moves the cursor to the main screen so the HUD renders on the screen being sampled
-- the script captures baseline, then launches one installed-app demo process per state for recording, processing, result, ordinary error, and retryable error screenshots
-- `scripts/verify_visual_acceptance.swift` verifies that the expected HUD band changes from baseline and that adjacent HUD states are visually distinct
+- the script launches one installed-app demo process per state, discovers the ChatType HUD window with CoreGraphics, and captures that window with `screencapture -l`
+- `scripts/verify_visual_acceptance.swift` verifies that each HUD-window screenshot has visible content and that adjacent states are visually distinct
 - generated evidence is stored under `dist/visual-acceptance/<run-id>`
 
 ## Packaging

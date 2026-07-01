@@ -33,9 +33,6 @@ fi
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 sleep 0.2
 
-swift "$ROOT/scripts/prepare_visual_acceptance_screen.swift"
-screencapture -x "$OUT_DIR/00-before.png"
-
 OPEN_PID=""
 
 cleanup() {
@@ -52,7 +49,6 @@ capture_state() {
   local log_file="$OUT_DIR/chattype-overlay-demo-$state.log"
 
   pkill -x "$APP_NAME" >/dev/null 2>&1 || true
-  swift "$ROOT/scripts/prepare_visual_acceptance_screen.swift"
   CHATTYPE_OVERLAY_DEMO=1 open -W -n -g \
     --stdout "$log_file" \
     --stderr "$log_file" \
@@ -60,8 +56,9 @@ capture_state() {
     --args --overlay-demo-state "$state" &
   OPEN_PID=$!
 
-  sleep 0.8
-  screencapture -x "$OUT_DIR/$output_file"
+  local window_id
+  window_id="$(swift "$ROOT/scripts/find_visual_acceptance_window.swift" "$APP_NAME" 5)"
+  screencapture -x -l "$window_id" "$OUT_DIR/$output_file"
   pkill -x "$APP_NAME" >/dev/null 2>&1 || true
   wait "$OPEN_PID" >/dev/null 2>&1 || true
   OPEN_PID=""
@@ -76,7 +73,6 @@ capture_state "retryable-error" "05-retryable-error.png"
 trap - EXIT
 
 swift "$ROOT/scripts/verify_visual_acceptance.swift" \
-  "$OUT_DIR/00-before.png" \
   "$OUT_DIR/01-recording.png" \
   "$OUT_DIR/02-processing.png" \
   "$OUT_DIR/03-result.png" \
@@ -89,8 +85,8 @@ cat >"$OUT_DIR/summary.md" <<SUMMARY
 - Run ID: \`$RUN_ID\`
 - App: \`$APP_BINARY\`
 - Demo flag: \`CHATTYPE_OVERLAY_DEMO=1\`
+- Capture: CoreGraphics window discovery plus \`screencapture -l\`
 - Evidence:
-  - \`00-before.png\`
   - \`01-recording.png\`
   - \`02-processing.png\`
   - \`03-result.png\`

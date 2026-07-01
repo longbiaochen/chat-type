@@ -9,30 +9,22 @@ struct LoadedImage {
     var height: Int { rep.pixelsHigh }
 }
 
-struct Region {
-    let xRange: Range<Int>
-    let yRange: Range<Int>
-}
-
 enum VerificationError: Error, CustomStringConvertible {
     case usage
     case unreadableImage(String)
-    case mismatchedImageSizes(String, String)
     case missingHud(String, Int)
     case duplicateState(String, String, Int)
 
     var description: String {
         switch self {
         case .usage:
-            return "Usage: verify_visual_acceptance.swift before recording processing result error retryable-error"
+            return "Usage: verify_visual_acceptance.swift recording processing result error retryable-error"
         case .unreadableImage(let path):
             return "Could not read screenshot: \(path)"
-        case .mismatchedImageSizes(let left, let right):
-            return "Screenshot sizes differ: \(left) vs \(right)"
-        case .missingHud(let state, let changedPixels):
-            return "\(state) did not change enough pixels in the expected HUD band (\(changedPixels) changed)"
+        case .missingHud(let state, let visiblePixels):
+            return "\(state) did not contain enough visible HUD pixels (\(visiblePixels) visible)"
         case .duplicateState(let left, let right, let changedPixels):
-            return "\(left) and \(right) look too similar in the HUD band (\(changedPixels) changed)"
+            return "\(left) and \(right) look too similar as HUD windows (\(changedPixels) changed pixels)"
         }
     }
 }
@@ -55,98 +47,85 @@ func loadImage(path: String, name: String) throws -> LoadedImage {
     return LoadedImage(name: name, rep: rep)
 }
 
-func hudSearchRegion(for image: LoadedImage) -> Region {
-    let horizontalInset = max(0, image.width / 12)
-    let top = max(0, image.height - 260)
-    let bottom = max(top, image.height - 24)
-
-    return Region(
-        xRange: horizontalInset..<max(horizontalInset + 1, image.width - horizontalInset),
-        yRange: top..<bottom
-    )
-}
-
-func colorDistance(_ left: NSColor, _ right: NSColor) -> Double {
-    guard
-        let l = left.usingColorSpace(.deviceRGB),
-        let r = right.usingColorSpace(.deviceRGB)
-    else {
-        return 0
-    }
-
-    let dr = Double(l.redComponent - r.redComponent) * 255
-    let dg = Double(l.greenComponent - r.greenComponent) * 255
-    let db = Double(l.blueComponent - r.blueComponent) * 255
-    let da = Double(l.alphaComponent - r.alphaComponent) * 255
-    return abs(dr) + abs(dg) + abs(db) + abs(da)
-}
-
-func changedPixelCount(
-    from left: LoadedImage,
-    to right: LoadedImage,
-    in region: Region,
-    threshold: Double
-) throws -> Int {
-    guard left.width == right.width, left.height == right.height else {
-        throw VerificationError.mismatchedImageSizes(left.name, right.name)
-    }
-
+func visiblePixelCount(in image: LoadedImage) -> Int {
     var count = 0
-    for y in region.yRange {
-        for x in region.xRange {
+
+    for y in 0..<image.height {
+        for x in 0..<image.width {
             guard
-                let leftColor = left.rep.colorAt(x: x, y: y),
-                let rightColor = right.rep.colorAt(x: x, y: y)
+                let color = image.rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                color.alphaComponent > 0.08
             else {
                 continue
             }
 
-            if colorDistance(leftColor, rightColor) >= threshold {
+            count += 1
+        }
+    }
+
+    return count
+}
+
+func changedPixelCount(from left: LoadedImage, to right: LoadedImage) -> Int {
+    var count = 0
+    let width = min(left.width, right.width)
+    let height = min(left.height, right.height)
+
+    for y in 0..<height {
+        for x in 0..<width {
+            guard
+                let leftColor = left.rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                let rightColor = right.rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+            else {
+                continue
+            }
+
+            let distance = abs(leftColor.redComponent - rightColor.redComponent)
+                + abs(leftColor.greenComponent - rightColor.greenComponent)
+                + abs(leftColor.blueComponent - rightColor.blueComponent)
+                + abs(leftColor.alphaComponent - rightColor.alphaComponent)
+            if distance > 0.08 {
                 count += 1
             }
         }
     }
+
     return count
 }
 
 do {
     let args = Array(CommandLine.arguments.dropFirst())
-    guard args.count == 6 else {
+    guard args.count == expectedStateNames.count else {
         throw VerificationError.usage
     }
 
-    let before = try loadImage(path: args[0], name: "before")
-    let states = try zip(expectedStateNames, args.dropFirst()).map { name, path in
+    let states = try zip(expectedStateNames, args).map { name, path in
         try loadImage(path: path, name: name)
     }
-    let region = hudSearchRegion(for: before)
-    let minimumPresenceDelta = 900
-    let minimumStateDelta = 120
+    let minimumVisiblePixels = 2_500
+    let minimumChangedPixels = 500
 
     for state in states {
-        let changed = try changedPixelCount(
-            from: before,
-            to: state,
-            in: region,
-            threshold: 72
-        )
-        guard changed >= minimumPresenceDelta else {
-            throw VerificationError.missingHud(state.name, changed)
+        let visiblePixels = visiblePixelCount(in: state)
+        guard visiblePixels >= minimumVisiblePixels else {
+            throw VerificationError.missingHud(state.name, visiblePixels)
         }
-        print("\(state.name): \(changed) HUD-band pixels changed from baseline")
+        print("\(state.name): \(state.width)x\(state.height), \(visiblePixels) visible HUD pixels")
     }
 
-    for pair in zip(states, states.dropFirst()) {
-        let changed = try changedPixelCount(
-            from: pair.0,
-            to: pair.1,
-            in: region,
-            threshold: 42
-        )
-        guard changed >= minimumStateDelta else {
-            throw VerificationError.duplicateState(pair.0.name, pair.1.name, changed)
+    for index in 0..<(states.count - 1) {
+        let left = states[index]
+        let right = states[index + 1]
+        if left.width != right.width || left.height != right.height {
+            print("\(left.name) -> \(right.name): distinct window size \(left.width)x\(left.height) -> \(right.width)x\(right.height)")
+            continue
         }
-        print("\(pair.0.name) -> \(pair.1.name): \(changed) HUD-band pixels changed")
+
+        let changedPixels = changedPixelCount(from: left, to: right)
+        guard changedPixels >= minimumChangedPixels else {
+            throw VerificationError.duplicateState(left.name, right.name, changedPixels)
+        }
+        print("\(left.name) -> \(right.name): \(changedPixels) changed HUD-window pixels")
     }
 
     print("ChatType visual acceptance passed.")
