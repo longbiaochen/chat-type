@@ -443,6 +443,10 @@ struct TerminologyNormalizer: TranscriptNormalizing {
             return true
         }
 
+        if containsHanCharacters(term), containsLatinLetters(term) {
+            return true
+        }
+
         if skeleton.count < 5, isPureLowercaseLatin(term) {
             return true
         }
@@ -465,11 +469,43 @@ struct TerminologyNormalizer: TranscriptNormalizing {
             corePattern = tokens
                 .map { NSRegularExpression.escapedPattern(for: $0) }
                 .joined(separator: #"(?:[\s._-]+)"#)
+        } else if containsHanCharacters(term) {
+            corePattern = mixedScriptLiteralPattern(for: term)
         } else {
             corePattern = NSRegularExpression.escapedPattern(for: term)
         }
 
         return #"(?<![A-Za-z0-9])\#(corePattern)(?![A-Za-z0-9])"#
+    }
+
+    private func mixedScriptLiteralPattern(for term: String) -> String {
+        let characters = Array(term)
+        var pattern = ""
+
+        for index in characters.indices {
+            let character = characters[index]
+            pattern += NSRegularExpression.escapedPattern(for: String(character))
+
+            let nextIndex = characters.index(after: index)
+            guard nextIndex < characters.endIndex else {
+                continue
+            }
+
+            if allowsSeparatorBetweenMixedScripts(character, characters[nextIndex]) {
+                pattern += #"(?:[\s._-]*)"#
+            }
+        }
+
+        return pattern
+    }
+
+    private func allowsSeparatorBetweenMixedScripts(_ lhs: Character, _ rhs: Character) -> Bool {
+        let lhsText = String(lhs)
+        let rhsText = String(rhs)
+        let lhsIsHan = containsHanCharacters(lhsText)
+        let rhsIsHan = containsHanCharacters(rhsText)
+
+        return (lhsIsHan && rhs.isASCIIAlphanumeric) || (lhs.isASCIIAlphanumeric && rhsIsHan)
     }
 
     private func flexibleLiteralPattern(for term: String) -> String {

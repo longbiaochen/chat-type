@@ -139,6 +139,41 @@ func terminologyNormalizerFuzzilyAlignsAccentedLatinTechnicalTerms() {
 }
 
 @Test
+func terminologyNormalizerDoesNotExpandStandaloneLatinInsideMixedScriptTerm() {
+    let result = TerminologyNormalizer().normalize(
+        text: "请打开 github 看一下。",
+        importedEntries: [
+            TerminologyEntry(
+                canonical: "玩转GitHub",
+                aliases: []
+            ),
+        ],
+        hintTerms: []
+    )
+
+    #expect(result.text == "请打开 github 看一下。")
+    #expect(result.fuzzyReplacementCount == 0)
+}
+
+@Test
+func terminologyNormalizerCollapsesSpacedMixedScriptTermWithoutDuplicatePrefix() {
+    let result = TerminologyNormalizer().normalize(
+        text: "我们继续讲 玩转 github 这门课。",
+        importedEntries: [
+            TerminologyEntry(
+                canonical: "玩转GitHub",
+                aliases: []
+            ),
+        ],
+        hintTerms: []
+    )
+
+    #expect(result.text == "我们继续讲 玩转GitHub 这门课。")
+    #expect(result.exactReplacementCount == 1)
+    #expect(result.fuzzyReplacementCount == 0)
+}
+
+@Test
 func terminologyNormalizerAppliesUserCorrectionForOpenClawMisrecognition() {
     let result = TerminologyNormalizer().normalize(
         text: "现在总是把 OpenCloud 识别错，必须锁死。",
