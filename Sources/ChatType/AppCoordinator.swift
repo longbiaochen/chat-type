@@ -34,6 +34,7 @@ final class AppCoordinator {
     let authManager: any ChatGPTAuthProviding
     let latencyRecorder: any LatencyRecording
     let historyRecorder: any TranscriptionHistoryRecording
+    let recoveryRecorder: any RecoveryRecording
     let soundFeedback: any SoundFeedbackPlaying
     let recorderFactory: RecorderFactory
     let statusMenuFactory: StatusMenuFactory
@@ -77,6 +78,7 @@ final class AppCoordinator {
         authManager: any ChatGPTAuthProviding = ChatGPTAuthManager(),
         latencyRecorder: any LatencyRecording = LatencyRecorder(),
         historyRecorder: any TranscriptionHistoryRecording = TranscriptionHistoryRecorder(),
+        recoveryRecorder: (any RecoveryRecording)? = nil,
         soundFeedback: any SoundFeedbackPlaying = SoundFeedbackService(),
         recorderFactory: @escaping RecorderFactory = { AudioRecorder(sampleRateHz: $0) },
         statusMenuFactory: @escaping StatusMenuFactory = { openSettings, openConfig, quit in
@@ -114,6 +116,9 @@ final class AppCoordinator {
         self.authManager = authManager
         self.latencyRecorder = latencyRecorder
         self.historyRecorder = historyRecorder
+        self.recoveryRecorder = recoveryRecorder ?? RecoveryStore(
+            directoryURL: configStore.directoryURL.appendingPathComponent("Recovery", isDirectory: true)
+        )
         self.soundFeedback = soundFeedback
         self.recorderFactory = recorderFactory
         self.statusMenuFactory = statusMenuFactory
@@ -424,6 +429,12 @@ final class AppCoordinator {
                             outcome: outcome,
                             launchAppContext: launchAppContext
                         )
+                        self.recordRecoverySuccess(
+                            audio: audio,
+                            prepared: prepared,
+                            outcome: outcome,
+                            launchAppContext: launchAppContext
+                        )
                         self.clearPendingRetry()
                         self.state = .idle
                         self.activeSessionID = nil
@@ -464,6 +475,11 @@ final class AppCoordinator {
                         transcriptionConfig: transcriptionConfig,
                         processingStarted: processingStarted
                     )
+                    self.recordRecoveryFailure(
+                        audio: audio,
+                        launchAppContext: launchAppContext,
+                        error: error
+                    )
 
                     if self.isRetryableTranscriptionError(error) {
                         do {
@@ -502,7 +518,11 @@ final class AppCoordinator {
         }
     }
 
-    private func openSettings() {
+    private func openSettings(focusRecoveryHistory: Bool = false) {
+        if focusRecoveryHistory {
+            preferencesWindowController = nil
+        }
+
         if preferencesWindowController == nil {
             let authManager: ChatGPTAuthManager
             if let concrete = self.authManager as? ChatGPTAuthManager {
@@ -569,13 +589,53 @@ final class AppCoordinator {
                     }
                     return (try? self.historyRecorder.loadRecent(limit: 200)) ?? []
                 },
+                onLoadRecoveryHistory: { [weak self] in
+                    guard let self else {
+                        return []
+                    }
+                    return (try? self.recoveryRecorder.loadRecent(limit: 10)) ?? []
+                },
+                recoveryDirectoryURL: recoveryRecorder.directoryURL,
+                onRetryRecoveryRecord: { [weak self] record in
+                    self?.retryRecoveryRecord(record)
+                },
                 onOpenConfigFolder: { [weak self] in
                     self?.openConfigFolder()
-                }
+                },
+                focusRecoveryHistory: focusRecoveryHistory
             )
         }
 
         preferencesWindowController?.show()
+    }
+
+    private func retryRecoveryRecord(_ record: RecoveryRecord) {
+        guard state == .idle else {
+            NSSound.beep()
+            return
+        }
+
+        let audioURL = record.audioURL(baseDirectory: recoveryRecorder.directoryURL)
+        guard FileManager.default.fileExists(atPath: audioURL.path) else {
+            overlay.showError("Saved recovery audio is missing.")
+            return
+        }
+
+        let sessionID = UUID()
+        activeSessionID = sessionID
+        state = .processing
+        let audio = RecordedAudio(fileURL: audioURL, durationMs: record.audioDurationMs)
+        statusMenu?.update(state: .processing, detail: "Retrying saved audio")
+        overlay.showProcessing()
+        startProcessing(
+            audio: audio,
+            sessionID: sessionID,
+            transcriptionConfig: config.transcription,
+            injectionConfig: config.injection,
+            launchAppContext: launchAppContextProvider(),
+            attemptPolicy: .manualRetry,
+            deleteAudioWhenFinished: false
+        )
     }
 
     private func openConfigFolder() {
@@ -902,6 +962,47 @@ final class AppCoordinator {
                 appBundleIdentifier: launchAppContext?.bundleIdentifier,
                 outcome: latencyResultStatus(for: outcome),
                 textPolishProvider: prepared.metrics.textPolishProvider?.rawValue
+            )
+        )
+    }
+
+    private func recordRecoverySuccess(
+        audio: RecordedAudio,
+        prepared: PreparedDictation,
+        outcome: InjectionOutcome,
+        launchAppContext: LaunchAppContext?
+    ) {
+        try? recoveryRecorder.record(
+            RecoveryRecordInput(
+                timestamp: Date(),
+                sourceAudioURL: audio.fileURL,
+                durationMs: audio.durationMs,
+                asrText: prepared.rawText,
+                polishText: prepared.finalText,
+                appName: launchAppContext?.localizedName,
+                appBundleIdentifier: launchAppContext?.bundleIdentifier,
+                outcome: latencyResultStatus(for: outcome),
+                errorMessage: prepared.metrics.textPolishErrorMessage
+            )
+        )
+    }
+
+    private func recordRecoveryFailure(
+        audio: RecordedAudio,
+        launchAppContext: LaunchAppContext?,
+        error: any Error
+    ) {
+        try? recoveryRecorder.record(
+            RecoveryRecordInput(
+                timestamp: Date(),
+                sourceAudioURL: audio.fileURL,
+                durationMs: audio.durationMs,
+                asrText: nil,
+                polishText: nil,
+                appName: launchAppContext?.localizedName,
+                appBundleIdentifier: launchAppContext?.bundleIdentifier,
+                outcome: "error",
+                errorMessage: error.localizedDescription
             )
         )
     }

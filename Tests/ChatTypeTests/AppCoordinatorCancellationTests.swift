@@ -577,8 +577,9 @@ struct AppCoordinatorCancellationTests {
             .retryableCloudflare(3),
             .success("retry final"),
         ])
+        let configStore = ConfigStore(fileManager: .default, homeDirectoryURL: root)
         let coordinator = AppCoordinator(
-            configStore: ConfigStore(fileManager: .default, homeDirectoryURL: root),
+            configStore: configStore,
             config: AppConfig(),
             notifier: FakeCoordinatorNotifier(),
             injector: injector,
@@ -612,6 +613,17 @@ struct AppCoordinatorCancellationTests {
         #expect(FileManager.default.fileExists(atPath: script.audioPaths[1]) == false)
         #expect(injector.launchContexts == [capturedContext])
         #expect(latencyRecorder.samples.map(\.resultStatus) == ["error", "pasted"])
+
+        let recoveryStore = RecoveryStore(
+            directoryURL: configStore.directoryURL.appendingPathComponent("Recovery", isDirectory: true)
+        )
+        let recoveryRecords = try recoveryStore.loadRecent(limit: 10)
+        #expect(recoveryRecords.map(\.outcome) == ["error", "pasted"])
+        #expect(RecoveryHistoryPreview.recentItems(from: recoveryRecords, kind: .audio, limit: 10).count == 2)
+        #expect(
+            RecoveryHistoryPreview.recentItems(from: recoveryRecords, kind: .asr, limit: 10).map(\.copyText)
+                == ["retry final"]
+        )
     }
 
     @Test

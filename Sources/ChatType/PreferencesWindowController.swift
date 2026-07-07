@@ -12,7 +12,11 @@ final class PreferencesWindowController: NSWindowController {
         onSave: @escaping (AppConfig) -> Void,
         onImportTerminologyDictionary: @escaping (AppConfig, URL) -> Result<AppConfig, any Error>,
         onLoadRecentHistory: @escaping () -> [TranscriptionHistoryRecord],
-        onOpenConfigFolder: @escaping () -> Void
+        onLoadRecoveryHistory: @escaping () -> [RecoveryRecord],
+        recoveryDirectoryURL: URL,
+        onRetryRecoveryRecord: @escaping (RecoveryRecord) -> Void,
+        onOpenConfigFolder: @escaping () -> Void,
+        focusRecoveryHistory: Bool = false
     ) {
         let view = PreferencesView(
             initialConfig: config,
@@ -20,7 +24,11 @@ final class PreferencesWindowController: NSWindowController {
             onSave: onSave,
             onImportTerminologyDictionary: onImportTerminologyDictionary,
             onLoadRecentHistory: onLoadRecentHistory,
-            onOpenConfigFolder: onOpenConfigFolder
+            onLoadRecoveryHistory: onLoadRecoveryHistory,
+            recoveryDirectoryURL: recoveryDirectoryURL,
+            onRetryRecoveryRecord: onRetryRecoveryRecord,
+            onOpenConfigFolder: onOpenConfigFolder,
+            focusRecoveryHistory: focusRecoveryHistory
         )
         let hostingController = NSHostingController(rootView: view)
 
@@ -85,6 +93,7 @@ private struct PreferencesView: View {
         case account = "Account"
         case dictation = "Dictation"
         case polish = "AI Polish"
+        case recovery = "History"
         case terminology = "Terminology"
         case paste = "Paste"
         case advanced = "Advanced"
@@ -99,6 +108,8 @@ private struct PreferencesView: View {
                 return "mic"
             case .polish:
                 return "wand.and.stars"
+            case .recovery:
+                return "clock.arrow.circlepath"
             case .terminology:
                 return "text.book.closed"
             case .paste:
@@ -135,12 +146,17 @@ private struct PreferencesView: View {
     @State private var textPolishMessage: String?
     @State private var textPolishMessageIsError = false
     @State private var recentHistoryRecords: [TranscriptionHistoryRecord] = []
+    @State private var recentRecoveryRecords: [RecoveryRecord] = []
+    @State private var selectedRecoveryKind: RecoveryHistoryKind = .audio
     @State private var copiedHistoryItemID: String?
 
     let authManager: ChatGPTAuthManager
     let onSave: (AppConfig) -> Void
     let onImportTerminologyDictionary: (AppConfig, URL) -> Result<AppConfig, any Error>
     let onLoadRecentHistory: () -> [TranscriptionHistoryRecord]
+    let onLoadRecoveryHistory: () -> [RecoveryRecord]
+    let recoveryDirectoryURL: URL
+    let onRetryRecoveryRecord: (RecoveryRecord) -> Void
     let onOpenConfigFolder: () -> Void
 
     init(
@@ -149,7 +165,11 @@ private struct PreferencesView: View {
         onSave: @escaping (AppConfig) -> Void,
         onImportTerminologyDictionary: @escaping (AppConfig, URL) -> Result<AppConfig, any Error>,
         onLoadRecentHistory: @escaping () -> [TranscriptionHistoryRecord],
-        onOpenConfigFolder: @escaping () -> Void
+        onLoadRecoveryHistory: @escaping () -> [RecoveryRecord],
+        recoveryDirectoryURL: URL,
+        onRetryRecoveryRecord: @escaping (RecoveryRecord) -> Void,
+        onOpenConfigFolder: @escaping () -> Void,
+        focusRecoveryHistory: Bool = false
     ) {
         _config = State(initialValue: initialConfig)
         _showsAdvancedRecovery = State(initialValue: initialConfig.transcription.provider == .openAICompatible)
@@ -157,10 +177,14 @@ private struct PreferencesView: View {
         _authSnapshot = State(initialValue: authManager.authSnapshot())
         _browserBridgeSnapshot = State(initialValue: authManager.browserBridgeSnapshot())
         _textPolishUsage = State(initialValue: Self.loadTextPolishUsage())
+        _selectedSection = State(initialValue: focusRecoveryHistory ? .recovery : .account)
         self.authManager = authManager
         self.onSave = onSave
         self.onImportTerminologyDictionary = onImportTerminologyDictionary
         self.onLoadRecentHistory = onLoadRecentHistory
+        self.onLoadRecoveryHistory = onLoadRecoveryHistory
+        self.recoveryDirectoryURL = recoveryDirectoryURL
+        self.onRetryRecoveryRecord = onRetryRecoveryRecord
         self.onOpenConfigFolder = onOpenConfigFolder
     }
 
@@ -278,6 +302,7 @@ private struct PreferencesView: View {
             browserBridgeSnapshot = authManager.browserBridgeSnapshot()
             refreshTextPolishStatus()
             refreshRecentHistory()
+            refreshRecoveryHistory()
         }
         .onReceive(NotificationCenter.default.publisher(for: .chatGPTAuthStateDidChange)) { _ in
             authSnapshot = authManager.authSnapshot()
@@ -287,6 +312,7 @@ private struct PreferencesView: View {
         .onAppear {
             refreshTextPolishStatus()
             refreshRecentHistory()
+            refreshRecoveryHistory()
         }
     }
 
@@ -349,6 +375,8 @@ private struct PreferencesView: View {
             return "Configure the F5 recording route and ASR behavior."
         case .polish:
             return "Rewrite long transcripts into concise, agent-friendly plans after ASR."
+        case .recovery:
+            return "Copy or retry recent audio, ASR, and AI-polished results."
         case .terminology:
             return "Maximize glossary recall and preserve casing for product and technical terms."
         case .paste:
@@ -367,6 +395,8 @@ private struct PreferencesView: View {
             dictationCard
         case .polish:
             aiPolishCard
+        case .recovery:
+            recoveryHistoryCard
         case .terminology:
             settingsCard(title: "Terminology Dictionary") {
                 terminologyDictionarySection
@@ -444,6 +474,18 @@ private struct PreferencesView: View {
 
     private func refreshRecentHistory() {
         recentHistoryRecords = onLoadRecentHistory()
+    }
+
+    private func refreshRecoveryHistory() {
+        recentRecoveryRecords = onLoadRecoveryHistory()
+    }
+
+    private var recentRecoveryItems: [RecoveryHistoryPreview] {
+        RecoveryHistoryPreview.recentItems(
+            from: recentRecoveryRecords,
+            kind: selectedRecoveryKind,
+            limit: 10
+        )
     }
 
     private var recentDictationHistoryItems: [TranscriptionHistoryPreview] {
@@ -626,6 +668,144 @@ private struct PreferencesView: View {
                 )
             }
         }
+    }
+
+    private var recoveryHistoryCard: some View {
+        settingsCard(title: "Recent Records") {
+            VStack(alignment: .leading, spacing: 12) {
+                Picker("Record type", selection: $selectedRecoveryKind) {
+                    Text("原始语音").tag(RecoveryHistoryKind.audio)
+                    Text("ASR 转录结果").tag(RecoveryHistoryKind.asr)
+                    Text("AI polish 结果").tag(RecoveryHistoryKind.polish)
+                }
+                .pickerStyle(.segmented)
+
+                HStack {
+                    Text("最近 10 条")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Refresh") {
+                        refreshRecoveryHistory()
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                if recentRecoveryItems.isEmpty {
+                    Text("No recoverable records yet.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 6)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(recentRecoveryItems) { item in
+                            recoveryHistoryRow(item)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func recoveryHistoryRow(_ item: RecoveryHistoryPreview) -> some View {
+        let isCopied = copiedHistoryItemID == item.id
+
+        return HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(item.target)
+                        .font(.system(size: 11, weight: .medium))
+                    Text(item.outcome)
+                        .font(.system(size: 10))
+                        .foregroundStyle(item.outcome == "error" ? .red : .secondary)
+                    Text(item.timestamp.formatted(date: .numeric, time: .shortened))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Text(item.text)
+                    .font(.system(size: 12))
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+                    .foregroundStyle(.primary)
+                if let errorMessage = item.errorMessage, !errorMessage.isEmpty {
+                    Text(errorMessage)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 6) {
+                if isCopied {
+                    Text("Copied")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.green)
+                        .transition(.opacity)
+                }
+
+                Button {
+                    copyRecoveryHistoryItem(item)
+                } label: {
+                    Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                        .frame(width: 12, height: 12)
+                }
+                .help("Copy")
+                .accessibilityLabel("Copy")
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button {
+                    retryRecoveryHistoryItem(item)
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .frame(width: 12, height: 12)
+                }
+                .help("Retry")
+                .accessibilityLabel("Retry")
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .frame(width: 132, alignment: .trailing)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func copyRecoveryHistoryItem(_ item: RecoveryHistoryPreview) {
+        NSPasteboard.general.clearContents()
+        switch item.copyKind {
+        case .text:
+            NSPasteboard.general.setString(item.copyText, forType: .string)
+        case .audioFile:
+            let audioURL = recoveryDirectoryURL
+                .appendingPathComponent("Audio", isDirectory: true)
+                .appendingPathComponent(item.audioFileName)
+            NSPasteboard.general.writeObjects([audioURL as NSURL])
+        }
+
+        withAnimation(.easeOut(duration: 0.12)) {
+            copiedHistoryItemID = item.id
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.6))
+            guard copiedHistoryItemID == item.id else {
+                return
+            }
+            withAnimation(.easeOut(duration: 0.18)) {
+                copiedHistoryItemID = nil
+            }
+        }
+    }
+
+    private func retryRecoveryHistoryItem(_ item: RecoveryHistoryPreview) {
+        guard let record = recentRecoveryRecords.first(where: { $0.id == item.recordID }) else {
+            return
+        }
+        onRetryRecoveryRecord(record)
     }
 
     private var polishStatusSection: some View {
