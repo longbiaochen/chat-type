@@ -47,10 +47,75 @@ private final class AttemptCounter: @unchecked Sendable {
     }
 }
 
-private func makeAudioFixture(named name: String = UUID().uuidString) throws -> RecordedAudio {
+private func makeAudioFixture(
+    named name: String = UUID().uuidString,
+    byteCount: Int? = nil
+) throws -> RecordedAudio {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(name).wav")
-    try Data("fake-audio".utf8).write(to: url)
+    if let byteCount {
+        try Data(repeating: 0x2A, count: byteCount).write(to: url)
+    } else {
+        try Data("fake-audio".utf8).write(to: url)
+    }
     return RecordedAudio(fileURL: url, durationMs: 1_000)
+}
+
+@Test
+func managedAuthSendsAudioAboveLegacyTenMegabyteLimit() async throws {
+    var config = AppConfig().transcription
+    config.provider = .chatGPTManagedAuth
+
+    let capture = RequestCapture()
+    let transcriber = ChatGPTTranscriber(
+        authManager: FakeChatGPTAuthManager(),
+        config: config,
+        bridgePromptCapability: BridgePromptCapabilityStore(),
+        dataLoader: { request in
+            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            capture.append(request, body: body)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (Data(#"{"text":"large audio transcript"}"#.utf8), response)
+        }
+    )
+
+    let byteCount = 10 * 1024 * 1024 + 1
+    let audio = try makeAudioFixture(byteCount: byteCount)
+    let result = try await transcriber.transcribe(audio)
+
+    #expect(result.text == "large audio transcript")
+    #expect(result.metrics.audioBytes == byteCount)
+    #expect(capture.bodies().count == 1)
+}
+
+@Test
+func rejectsAudioAboveOfficialTwentyFiveMegabyteLimit() async throws {
+    var config = AppConfig().transcription
+    config.provider = .chatGPTManagedAuth
+
+    let transcriber = ChatGPTTranscriber(
+        authManager: FakeChatGPTAuthManager(),
+        config: config,
+        bridgePromptCapability: BridgePromptCapabilityStore(),
+        dataLoader: { _ in
+            Issue.record("Oversized audio should be rejected before a network request")
+            throw URLError(.badServerResponse)
+        }
+    )
+
+    let audio = try makeAudioFixture(byteCount: 25_000_001)
+    var caughtError: Error?
+    do {
+        _ = try await transcriber.transcribe(audio)
+    } catch {
+        caughtError = error
+    }
+
+    #expect(caughtError?.localizedDescription.contains("25 MB") == true)
 }
 
 @Test

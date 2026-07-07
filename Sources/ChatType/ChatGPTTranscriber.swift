@@ -1,5 +1,10 @@
 import Foundation
 
+private enum TranscriptionUploadLimit {
+    static let maxBytes = 25_000_000
+    static let label = "25 MB"
+}
+
 enum TranscriptionError: LocalizedError {
     case invalidAudio
     case payloadTooLarge
@@ -13,7 +18,7 @@ enum TranscriptionError: LocalizedError {
         case .invalidAudio:
             return "录音文件无效。"
         case .payloadTooLarge:
-            return "录音文件超过 10 MB，当前实现不发送。"
+            return "录音文件超过 \(TranscriptionUploadLimit.label)，已超过 ChatGPT/OpenAI 转写上传上限，当前不发送。"
         case .transcriptionFailed(let message):
             return "ChatGPT 转写失败：\(message)"
         case .invalidResponse:
@@ -133,7 +138,7 @@ struct ChatGPTTranscriber: Sendable {
         guard !data.isEmpty else {
             throw TranscriptionError.invalidAudio
         }
-        guard data.count <= 10 * 1024 * 1024 else {
+        guard data.count <= TranscriptionUploadLimit.maxBytes else {
             throw TranscriptionError.payloadTooLarge
         }
 
